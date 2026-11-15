@@ -1,0 +1,30 @@
+id: revenue_by_category
+question: Which product categories generate the most revenue and margin?
+intent: category_performance
+tags: [category, product performance, revenue, margin, profitability, products]
+tables: [order_items, products]
+sql: |
+  SELECT p.category,
+         ROUND(SUM(oi.sale_price), 2) AS net_revenue,
+         ROUND(SUM(oi.sale_price - p.cost), 2) AS gross_margin,
+         ROUND(SAFE_DIVIDE(SUM(oi.sale_price - p.cost), SUM(oi.sale_price)), 3) AS margin_pct,
+         COUNT(*) AS items_sold
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+    AND DATE(oi.created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
+  GROUP BY p.category
+  ORDER BY net_revenue DESC
+interpretation:
+  - Default window is the trailing 12 months unless the user specifies one.
+  - Gross margin = sale_price - products.cost; report margin % next to revenue because high-revenue categories are not always the most profitable.
+analyst_report: |
+  Outerwear & Coats and Jeans lead revenue; Accessories and Socks lead margin %. Recommend protecting
+  margin in outerwear (fewer markdowns) and cross-selling accessories at checkout.
+quality_score: 0.95
+created_at: '2026-01-20'
+last_validated_at: '2026-11-01'
+author: analytics-team
+source: analyst
+status: active
+version: 1

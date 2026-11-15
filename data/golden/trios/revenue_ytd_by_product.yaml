@@ -1,0 +1,28 @@
+id: revenue_ytd_by_product
+question: What is our up-to-date (year to date) revenue by product?
+intent: ytd_revenue_product
+tags: [ytd, year to date, up to date, revenue, product, running total]
+tables: [order_items, products]
+sql: |
+  SELECT p.name AS product, p.category,
+         ROUND(SUM(oi.sale_price), 2) AS ytd_net_revenue,
+         COUNT(*) AS units
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+    AND DATE(oi.created_at) >= DATE_TRUNC(CURRENT_DATE(), YEAR)
+  GROUP BY product, p.category
+  ORDER BY ytd_net_revenue DESC
+  LIMIT 20
+interpretation:
+  - Up-to-date / YTD = from January 1st of the current year until today.
+  - With thousands of products show the top N and offer a category roll-up.
+analyst_report: |
+  YTD revenue is concentrated in outerwear; the top 20 products make up a small share of revenue.
+quality_score: 0.8
+created_at: '2026-07-01'
+last_validated_at: '2026-11-01'
+author: analytics-team
+source: analyst
+status: active
+version: 1

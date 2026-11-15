@@ -1,0 +1,30 @@
+id: monthly_revenue_trend
+question: What is our monthly revenue trend over the last 12 months?
+intent: time_series_revenue
+tags: [revenue, monthly, revenue per month, trend, over time, past year, sales, growth, time-based, aov]
+tables: [order_items]
+sql: |
+  SELECT FORMAT_DATE('%Y-%m', DATE(oi.created_at)) AS month,
+         ROUND(SUM(oi.sale_price), 2) AS net_revenue,
+         COUNT(DISTINCT oi.order_id) AS orders,
+         ROUND(SUM(oi.sale_price) / COUNT(DISTINCT oi.order_id), 2) AS avg_order_value
+  FROM order_items AS oi
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+    AND DATE(oi.created_at) >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 12 MONTH)
+    AND DATE(oi.created_at) < DATE_TRUNC(CURRENT_DATE(), MONTH)
+  GROUP BY month
+  ORDER BY month
+interpretation:
+  - Revenue means NET revenue = SUM(order_items.sale_price) excluding Cancelled and Returned items.
+  - Use complete calendar months only; the current partial month distorts trends.
+  - Always pair revenue with order count and average order value so growth can be decomposed (volume vs basket).
+analyst_report: |
+  Net revenue grew steadily through the year with a seasonal peak in Nov-Dec. Growth was volume-driven
+  (orders up) while AOV stayed flat, so the lever for next year is basket size (bundles, free-shipping thresholds).
+quality_score: 0.95
+created_at: '2026-03-02'
+last_validated_at: '2026-11-01'
+author: analytics-team
+source: analyst
+status: active
+version: 1

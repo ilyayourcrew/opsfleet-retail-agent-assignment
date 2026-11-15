@@ -1,0 +1,33 @@
+id: repeat_purchase_cohorts
+question: What share of new customers come back for a second order?
+intent: retention_cohorts
+tags: [repeat, retention, cohort, loyalty, second order, returning customers]
+tables: [orders]
+sql: |
+  WITH firsts AS (
+    SELECT o.user_id,
+           MIN(DATE(o.created_at)) AS first_order,
+           COUNT(DISTINCT o.order_id) AS orders
+    FROM orders AS o
+    WHERE o.status != 'Cancelled'
+    GROUP BY o.user_id
+  )
+  SELECT CONCAT(CAST(EXTRACT(YEAR FROM first_order) AS STRING), '-Q', CAST(EXTRACT(QUARTER FROM first_order) AS STRING)) AS cohort_quarter,
+         COUNT(*) AS customers,
+         ROUND(COUNTIF(orders >= 2) / COUNT(*), 3) AS repeat_rate
+  FROM firsts
+  GROUP BY cohort_quarter
+  ORDER BY cohort_quarter DESC
+  LIMIT 8
+interpretation:
+  - Cohort = quarter of the customer's first non-cancelled order; repeat = 2+ orders ever.
+  - Recent cohorts have had less time to return - flag that bias.
+analyst_report: |
+  Roughly a third of customers come back; recent cohorts look worse partly because of the time bias.
+quality_score: 0.8
+created_at: '2026-06-20'
+last_validated_at: '2026-11-01'
+author: analytics-team
+source: analyst
+status: active
+version: 1

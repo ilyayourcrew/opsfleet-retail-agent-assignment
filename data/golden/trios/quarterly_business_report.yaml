@@ -1,0 +1,36 @@
+id: quarterly_business_report
+question: Create a report for Q1 including insights and action items for Q2
+intent: quarterly_report
+tags: [report, quarter, q1, q2, quarterly review, insights, action items, summary, kpi]
+tables: [order_items, products]
+sql: |
+  SELECT FORMAT_DATE('%Y-%m', DATE(oi.created_at)) AS month,
+         p.department,
+         ROUND(SUM(IF(oi.status NOT IN ('Cancelled', 'Returned'), oi.sale_price, 0)), 2) AS net_revenue,
+         COUNT(DISTINCT oi.order_id) AS orders,
+         COUNT(DISTINCT oi.user_id) AS customers,
+         ROUND(COUNTIF(oi.status = 'Returned') / COUNT(*), 3) AS return_rate,
+         ROUND(SAFE_DIVIDE(SUM(IF(oi.status NOT IN ('Cancelled', 'Returned'), oi.sale_price - p.cost, 0)),
+                           SUM(IF(oi.status NOT IN ('Cancelled', 'Returned'), oi.sale_price, 0))), 3) AS margin_pct
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  WHERE EXTRACT(YEAR FROM oi.created_at) = EXTRACT(YEAR FROM CURRENT_DATE())
+    AND EXTRACT(QUARTER FROM oi.created_at) = 1
+  GROUP BY month, p.department
+  ORDER BY month, p.department
+interpretation:
+  - Q1 = January-March of the current year unless the user names a year.
+  - A quarterly report covers revenue, orders, customers, return rate and margin, by month and department, compared with the previous quarter when possible.
+  - Structure - executive summary, KPIs, insights, risks, and action items for next quarter with owners.
+analyst_report: |
+  Q1 net revenue grew month over month in both departments; Women's margin was stable while Men's return
+  rate rose in March. Q2 actions - (1) fix the Men's denim return driver (owner - category lead),
+  (2) push spring outerwear clearance before May (owner - merchandising), (3) launch repeat-purchase email
+  for Q1 first-time buyers (owner - CRM).
+quality_score: 0.9
+created_at: '2026-04-05'
+last_validated_at: '2026-11-01'
+author: analytics-team
+source: analyst
+status: active
+version: 1

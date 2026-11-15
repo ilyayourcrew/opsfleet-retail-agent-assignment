@@ -1,0 +1,29 @@
+id: traffic_source_value
+question: Which acquisition channels bring the most valuable customers?
+intent: channel_performance
+tags: [traffic source, channel, acquisition, marketing, facebook, search, email, organic, customer value]
+tables: [order_items, users]
+sql: |
+  SELECT u.traffic_source,
+         COUNT(DISTINCT u.id) AS customers,
+         ROUND(SUM(oi.sale_price), 2) AS net_revenue,
+         ROUND(SUM(oi.sale_price) / COUNT(DISTINCT u.id), 2) AS revenue_per_customer
+  FROM order_items AS oi
+  JOIN users AS u ON u.id = oi.user_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+    AND DATE(oi.created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
+  GROUP BY u.traffic_source
+  ORDER BY net_revenue DESC
+interpretation:
+  - Value = revenue per customer, not just total revenue (Search dominates volume).
+  - traffic_source is a customer attribute, so it is reported only in aggregate.
+analyst_report: |
+  Search brings ~70% of customers; Email-acquired customers have the highest revenue per customer.
+  Action: grow the email list (incentivised sign-up) rather than raising paid-social spend.
+quality_score: 0.85
+created_at: '2026-03-18'
+last_validated_at: '2026-11-01'
+author: analytics-team
+source: analyst
+status: active
+version: 1

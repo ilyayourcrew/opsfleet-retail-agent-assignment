@@ -1,0 +1,28 @@
+id: country_revenue_yoy
+question: How is revenue by country developing this year compared to last year?
+intent: geo_growth
+tags: [country, international, yoy, year over year, growth, markets, geography]
+tables: [order_items, users]
+sql: |
+  SELECT u.country,
+         ROUND(SUM(IF(EXTRACT(YEAR FROM oi.created_at) = EXTRACT(YEAR FROM CURRENT_DATE()), oi.sale_price, 0)), 2) AS revenue_this_ytd,
+         ROUND(SUM(IF(EXTRACT(YEAR FROM oi.created_at) = EXTRACT(YEAR FROM CURRENT_DATE()) - 1
+                      AND EXTRACT(DAYOFYEAR FROM oi.created_at) <= EXTRACT(DAYOFYEAR FROM CURRENT_DATE()), oi.sale_price, 0)), 2) AS revenue_last_ytd,
+         COUNT(DISTINCT u.id) AS customers
+  FROM order_items AS oi
+  JOIN users AS u ON u.id = oi.user_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+    AND EXTRACT(YEAR FROM oi.created_at) >= EXTRACT(YEAR FROM CURRENT_DATE()) - 1
+  GROUP BY u.country
+  ORDER BY revenue_this_ytd DESC
+interpretation:
+  - Compare like-for-like periods (YTD vs same days last year), not full last year.
+analyst_report: |
+  All major markets grow YoY; China and Brasil grow fastest. Prioritise localisation for those markets.
+quality_score: 0.8
+created_at: '2026-09-09'
+last_validated_at: '2026-11-01'
+author: analytics-team
+source: analyst
+status: active
+version: 1

@@ -1,0 +1,30 @@
+id: top_customers_by_spend
+question: Who are our top 10 customers by total spend?
+intent: customer_ranking
+tags: [customers, top, spend, lifetime value, ltv, best customers, behavior]
+tables: [order_items]
+sql: |
+  SELECT oi.user_id AS customer_id,
+         COUNT(DISTINCT oi.order_id) AS orders,
+         ROUND(SUM(oi.sale_price), 2) AS total_spend,
+         MIN(DATE(oi.created_at)) AS first_purchase,
+         MAX(DATE(oi.created_at)) AS last_purchase
+  FROM order_items AS oi
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+  GROUP BY customer_id
+  ORDER BY total_spend DESC
+  LIMIT 10
+interpretation:
+  - Spend is net of cancellations and returns.
+  - Customers are identified only by a pseudonymous id - never by name or contact details.
+  - Add orders and first/last purchase dates so the reader sees loyalty vs one big purchase.
+analyst_report: |
+  The top 10 customers account for a tiny share of revenue - the business is not dependent on whales.
+  Most top spenders placed 3+ orders; a VIP programme targeting 3rd-order customers is recommended.
+quality_score: 0.9
+created_at: '2026-02-11'
+last_validated_at: '2026-11-01'
+author: analytics-team
+source: analyst
+status: active
+version: 1

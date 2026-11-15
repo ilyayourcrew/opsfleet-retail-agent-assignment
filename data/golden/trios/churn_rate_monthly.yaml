@@ -1,0 +1,53 @@
+id: churn_rate_monthly
+question: Why did our churn rate spike last month?
+intent: churn_analysis
+tags: [churn, retention, spike, last month, lost customers, attrition, why]
+tables: [orders]
+sql: |
+  WITH monthly AS (
+    SELECT DISTINCT o.user_id, DATE_TRUNC(DATE(o.created_at), MONTH) AS month
+    FROM orders AS o
+    WHERE o.status != 'Cancelled'
+  ),
+  months AS (
+    SELECT DISTINCT month FROM monthly
+    WHERE month >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 6 MONTH)
+      AND month < DATE_TRUNC(CURRENT_DATE(), MONTH)
+  ),
+  churn AS (
+    SELECT m.month,
+           COUNT(DISTINCT prev.user_id) AS active_prior_90d,
+           COUNT(DISTINCT IF(cur.user_id IS NULL, prev.user_id, NULL)) AS churned
+    FROM months AS m
+    JOIN monthly AS prev ON prev.month >= DATE_SUB(m.month, INTERVAL 3 MONTH) AND prev.month < m.month
+    LEFT JOIN monthly AS cur ON cur.user_id = prev.user_id AND cur.month = m.month
+    GROUP BY m.month
+  ),
+  quality AS (
+    SELECT DATE_TRUNC(DATE(o.created_at), MONTH) AS month,
+           ROUND(COUNTIF(o.status = 'Cancelled') / COUNT(*), 3) AS cancel_rate,
+           ROUND(COUNTIF(o.status = 'Returned') / COUNT(*), 3) AS return_rate
+    FROM orders AS o
+    GROUP BY month
+  )
+  SELECT FORMAT_DATE('%Y-%m', c.month) AS month, c.active_prior_90d, c.churned,
+         ROUND(SAFE_DIVIDE(c.churned, c.active_prior_90d), 3) AS churn_rate,
+         q.cancel_rate, q.return_rate
+  FROM churn AS c
+  LEFT JOIN quality AS q ON q.month = c.month
+  ORDER BY c.month
+interpretation:
+  - Churn (monthly) = customers who ordered in the previous 3 months but not in the month, divided by customers active in the previous 3 months.
+  - thelook customers buy rarely, so absolute churn is high; look at the CHANGE vs prior months, not the level.
+  - Explain spikes with leading indicators on the same rows - cancellation and return rates - then drill into categories.
+analyst_report: |
+  Churn rose sharply last month while cancellation and return rates also spiked, pointing to a
+  fulfilment/quality issue rather than demand. Action: audit late shipments and the most-returned
+  categories; win-back campaign for customers whose last order was cancelled.
+quality_score: 0.85
+version: 2
+created_at: '2026-06-03'
+last_validated_at: '2026-11-01'
+author: analytics-team
+source: analyst
+status: active

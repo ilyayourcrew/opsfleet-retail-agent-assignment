@@ -1,0 +1,33 @@
+id: spend_by_age_band
+question: How does spending differ by age group and gender?
+intent: demographic_segmentation
+tags: [age, gender, demographics, segment, spend, customers, generation]
+tables: [order_items, users]
+sql: |
+  SELECT CASE WHEN u.age < 18 THEN 'under 18'
+              WHEN u.age < 25 THEN '18-24'
+              WHEN u.age < 35 THEN '25-34'
+              WHEN u.age < 45 THEN '35-44'
+              WHEN u.age < 55 THEN '45-54'
+              ELSE '55+' END AS age_band,
+         u.gender,
+         COUNT(DISTINCT u.id) AS customers,
+         ROUND(SUM(oi.sale_price), 2) AS net_revenue,
+         ROUND(SUM(oi.sale_price) / COUNT(DISTINCT u.id), 2) AS revenue_per_customer
+  FROM order_items AS oi
+  JOIN users AS u ON u.id = oi.user_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+  GROUP BY age_band, u.gender
+  ORDER BY age_band, u.gender
+interpretation:
+  - Always band ages (never exact ages) and report group sizes; groups under the minimum size are suppressed.
+analyst_report: |
+  Revenue per customer is remarkably flat across age bands; gender mix differs by category more than by age.
+  Targeting by category affinity beats age targeting.
+quality_score: 0.8
+created_at: '2026-02-25'
+last_validated_at: '2026-11-01'
+author: analytics-team
+source: analyst
+status: active
+version: 1
