@@ -1,0 +1,41 @@
+# Data-access policy. Read at runtime; editing it changes behaviour without a code change.
+# Classification per column of the 4 tables the agent may use:
+#   pii      -> never selectable, never sent to the LLM, never shown. Physically removed from the
+#               policy views the SQL is rewritten onto (so even SELECT * cannot reach them).
+#   quasi    -> quasi-identifiers: usable only inside aggregates over groups of at least
+#               k_anonymity_min distinct customers (k injected as HAVING by the SQL guard).
+#   person_id-> identifies a customer; allowed for grouping/joins, pseudonymised (HMAC) in results.
+#   (anything else is a normal business column)
+
+k_anonymity_min: 5   # overridden by RA_K_ANONYMITY_MIN if set
+
+allowed_tables: [orders, order_items, products, users]
+
+tables:
+  users:
+    pii: [first_name, last_name, email, street_address, postal_code, latitude, longitude, user_geom]
+    quasi: [age, gender, city, state, country, traffic_source]
+    person_id: [id]
+  orders:
+    quasi: [gender]
+    person_id: [user_id]
+  order_items:
+    person_id: [user_id]
+  products: {}
+
+# Not used by the agent (outside the four required tables) but classified for completeness:
+#   events.ip_address -> pii ; events.city/state/postal_code -> quasi/pii as in users.
+documented_only:
+  events:
+    pii: [ip_address, postal_code]
+    quasi: [city, state, traffic_source, browser]
+
+# Functions that could exfiltrate data, reach other systems or bypass the policy.
+denied_functions:
+  - EXTERNAL_QUERY
+  - SESSION_USER
+  - ML.GENERATE_TEXT
+  - AI.GENERATE
+  - VECTOR_SEARCH
+  - APPENDS
+  - CHANGES

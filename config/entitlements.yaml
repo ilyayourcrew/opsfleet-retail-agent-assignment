@@ -1,0 +1,32 @@
+# Who may analyse which products. In production this comes from the identity provider / an
+# entitlement service and is enforced with BigQuery row-access policies; here it is a YAML file
+# re-read on every query. A user sees only order_items for entitled products, only orders that
+# contain such items, and only customers who bought them.
+#
+# Filters inside one user are AND-ed across dimensions and OR-ed inside a list.
+# "*" = everything. Users not listed are denied all data access (fail closed).
+
+users:
+  ceo:
+    display_name: "CEO"
+    role: executive
+    products: "*"
+
+  head_of_womens:
+    display_name: "Head of Womenswear"
+    role: category_lead
+    products:
+      department: [Women]
+
+  mens_outerwear_lead:
+    display_name: "Menswear Outerwear & Denim Lead"
+    role: category_lead
+    products:
+      department: [Men]
+      category: [Outerwear & Coats, Jeans]
+
+  brand_manager_levis:
+    display_name: "Brand Manager - Levi's & Calvin Klein"
+    role: brand_manager
+    products:
+      brand: ["Levi's", Calvin Klein]

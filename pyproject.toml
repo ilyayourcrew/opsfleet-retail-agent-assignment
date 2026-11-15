@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retail-agent"
+version = "0.1.0"
+description = "Data-analysis chat agent for retail executives (Google ADK + Gemini + BigQuery)"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "google-adk>=2.14,<3",
+    "google-genai>=2.30",
+    "google-cloud-bigquery>=3.30",
+    "db-dtypes>=1.3",
+    "pandas>=2.2",
+    "duckdb>=1.2",
+    "sqlglot>=26",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "pyyaml>=6",
+    "typer>=0.15",
+    "rich>=13.9",
+    "tenacity>=9",
+    "python-dotenv>=1",
+    "matplotlib>=3.9",
+]
+
+[project.optional-dependencies]
+ollama = ["litellm>=1.60"]
+dev = ["pytest>=8", "pytest-asyncio>=0.25", "ruff>=0.9"]
+
+[project.scripts]
+retail-agent = "retail_agent.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+markers = ["online: needs Google Cloud + Gemini credentials (skipped by default)"]
+addopts = "-m 'not online'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501"]

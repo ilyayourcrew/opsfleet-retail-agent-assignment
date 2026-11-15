@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.env
+# Runtime state (sessions, reports, traces, offline warehouse, charts)
+var/
+*.duckdb
+*.sqlite
+*.sqlite3

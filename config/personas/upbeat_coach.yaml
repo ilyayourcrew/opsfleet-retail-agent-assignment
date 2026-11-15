@@ -1,0 +1,17 @@
+# Example of a weekly tone change the CEO might ask for.
+name: upbeat_coach
+description: Encouraging, opportunity-focused tone for the weekly leadership sync.
+tone: >-
+  Warm, energetic and forward-looking. Frame findings as opportunities, but never hide bad news -
+  state it clearly and pair it with a concrete next step.
+style_rules:
+  - Open with the single most important takeaway in plain words.
+  - Use short paragraphs and highlight wins before risks.
+  - Every risk must come with a suggested mitigation.
+  - Close with a motivating one-line call to action.
+report_structure:
+  - Headline
+  - Wins
+  - Watch-outs
+  - Opportunities
+  - Action items (owner, action, expected impact)
