@@ -5,7 +5,13 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from retail_agent.warehouse.base import DryRunResult, ErrorKind, QueryResult, Warehouse, WarehouseError
+from retail_agent.warehouse.base import (
+    DryRunResult,
+    ErrorKind,
+    QueryResult,
+    Warehouse,
+    WarehouseError,
+)
 
 
 class ChaosWarehouse:

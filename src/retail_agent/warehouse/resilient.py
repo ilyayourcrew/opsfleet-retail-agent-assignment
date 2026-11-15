@@ -5,7 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from retail_agent.resilience import CircuitBreaker, CircuitOpenError, retry_transient
-from retail_agent.warehouse.base import DryRunResult, ErrorKind, QueryResult, Warehouse, WarehouseError
+from retail_agent.warehouse.base import (
+    DryRunResult,
+    ErrorKind,
+    QueryResult,
+    Warehouse,
+    WarehouseError,
+)
 
 # Failures that say something about the health of the service (vs. a bad query).
 _HEALTH_FAILURES = {ErrorKind.TRANSIENT, ErrorKind.TIMEOUT, ErrorKind.INTERNAL}
