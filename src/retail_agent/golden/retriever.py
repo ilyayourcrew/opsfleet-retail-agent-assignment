@@ -28,7 +28,8 @@ _SYNONYMS = {
     "monthly": "month", "yearly": "year", "annual": "year", "annually": "year", "quarterly": "quarter",
     "weekly": "week", "daily": "day", "sale": "revenue", "turnover": "revenue", "income": "revenue",
     "clients": "customer", "client": "customer", "buyer": "customer", "shopper": "customer", "user": "customer",
-    "vs": "compare", "versus": "compare", "comparison": "compare",
+    "vs": "compare", "versus": "compare", "comparison": "compare", "spent": "spend", "spending": "spend",
+    "biggest": "top", "largest": "top", "best": "top", "highest": "top",
 }
 
 

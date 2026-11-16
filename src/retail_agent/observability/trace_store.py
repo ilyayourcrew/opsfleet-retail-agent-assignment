@@ -166,7 +166,7 @@ class TraceStore:
     # ------------------------------------------------------------------ queries
     def turn(self, trace_id: str) -> dict[str, Any] | None:
         with self._lock:
-            r = self._con.execute("SELECT * FROM turns WHERE trace_id LIKE ?", (trace_id + "%",)).fetchone()
+            r = self._con.execute("SELECT * FROM turns WHERE trace_id LIKE ? ORDER BY started_at DESC", ("%" + trace_id.strip() + "%",)).fetchone()
         return dict(r) if r else None
 
     def spans(self, trace_id: str) -> list[dict[str, Any]]:
