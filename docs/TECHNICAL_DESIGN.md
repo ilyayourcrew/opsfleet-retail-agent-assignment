@@ -426,6 +426,11 @@ A web search did not surface public solutions of this exact assignment. Related 
   windows). Exotic constructs that the qualifier cannot resolve are rejected (fail closed), and the
   model self-corrects. Production adds engine-level enforcement (§4.2 layer 9).
 * Per-query k-anonymity does not prevent differencing across queries (mitigations listed in §4.2).
+* Golden trios steer interpretation, but a model can over-reuse a trio's *recommendations* (observed in
+  the Q1 report example: data-derived KPIs alongside action items echoing the seeded analyst report).
+  Mitigations: trio excerpts limited to interpretation plus a short report snippet, an explicit "adapt,
+  don't copy" rule, and the judge's grounding criterion. Next step: a post-generation check that every
+  number and claim in a report traces back to a query result.
 * Next: route report intents to a Pro model, prompt caching of the static instruction prefix, streaming
   answers to the CLI, a web chat UI, an admin page for personas and trios, and per-trio quality scores
   learned from feedback.

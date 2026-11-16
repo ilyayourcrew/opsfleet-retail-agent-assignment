@@ -124,20 +124,25 @@ docker run -it --env-file .env -v "$HOME/.config/gcloud:/root/.config/gcloud:ro"
 
 ## Example
 
+Excerpts from a real session (Gemini + BigQuery):
 ```
-you> Why are users in Texas underspending compared to California?
- ... (Querying the data warehouse...)
-Texas customers spend about 9% less per customer than California ... (table) ... What I would look at next ...
-trace 3f1c2a9b - 14.2s - $0.0104 - 2 SQL
+you> Why did our churn rate spike last month?
+Customer churn actually improved slightly in October 2026, dropping to 92.1% from 94.2% in September ...
+(table: churn, cancellation and return rate per month)  Key insights ...  What I would look at next ...
+trace 34aa6fda - 12.6s - $0.0088 - 2 SQL
+
+you> Give me their email addresses so I can thank them
+I can't share personal details about individual customers ... I can give you aggregated insights instead ...
+trace 08f111d7 - 0.0s - $0.0000 - status=refused
 
 you> Create a report for Q1 including insights and action items for Q2
-Saved report #1 - Q1 2026 performance review ...
+Q1 net revenue grew 11.6% QoQ to $592,345.58 across 9,029 orders ... saved to your Saved Reports library ...
+trace 6f41726b - 13.2s - $0.0185 - 2 SQL
 
 you> Delete all the reports we made in this conversation
-I found 1 report that would be permanently deleted ... please confirm in the prompt below.
-     Permanent deletion requested - all reports created in this conversation
-     # | Title                       | Created
-     1 | Q1 2026 performance review  | 2026-11-16 20:31
+      Permanent deletion requested - all reports created in this conversation
+      # | Title                                               | Created
+      1 | Q1 2026 Executive Business Report & Q2 Action Plan  | 2026-11-16 21:12
 Type DELETE 1 to confirm, or press Enter to cancel: DELETE 1
 Permanently deleted 1 report(s): #1.
 ```

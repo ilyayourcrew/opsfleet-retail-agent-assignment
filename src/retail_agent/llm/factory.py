@@ -80,10 +80,19 @@ def build_classifier(settings: Settings) -> Callable[[str], str] | None:
         http_options=types.HttpOptions(timeout=10_000),
     )
 
+    # light model first, then the last model of the main chain (different capacity pool)
+    candidates = list(dict.fromkeys([settings.model_light, *settings.fallback_models[-1:]]))
+
     def classify(prompt: str) -> str:
         def call() -> str:
-            r = client.models.generate_content(model=settings.model_light, contents=prompt, config=cfg)
-            return r.text or ""
+            last_err: Exception | None = None
+            for m in candidates:
+                try:
+                    r = client.models.generate_content(model=m, contents=prompt, config=cfg)
+                    return r.text or ""
+                except Exception as e:  # noqa: BLE001 - try the next model
+                    last_err = e
+            raise last_err  # type: ignore[misc]
 
         return breaker.call(call)
 

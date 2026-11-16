@@ -440,8 +440,12 @@ def doctor(provider: str = typer.Option(None), warehouse: str = typer.Option(Non
                 c = genai.Client()
                 for m in dict.fromkeys([s.model_primary, *s.fallback_models, s.model_light]):
                     t0 = time.time()
-                    r = c.models.generate_content(model=m, contents="Reply with the single word: ok")
-                    console.print(f"[green]OK[/green] {m}: {r.text.strip()[:20]!r} ({time.time() - t0:.1f}s)")
+                    try:
+                        r = c.models.generate_content(model=m, contents="Reply with the single word: ok")
+                        console.print(f"[green]OK[/green]   {m}: {r.text.strip()[:20]!r} ({time.time() - t0:.1f}s)")
+                    except Exception as e:  # noqa: BLE001 - report every model, keep going
+                        msg = str(e).split(". {")[0][:90]
+                        console.print(f"[yellow]DOWN[/yellow] {m}: {msg} - the fallback chain will skip it")
             except Exception as e:  # noqa: BLE001
                 console.print(f"[red]FAIL[/red] Gemini: {e}")
 
