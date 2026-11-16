@@ -313,11 +313,17 @@ fails without the fix.
 
 ## 4. Evidence to quote
 
-* Offline: 124 tests; eval gate passed (32 cases: golden 1.00, red team 10/10, behaviour 4/4,
+* Offline: 125 tests; eval gate passed (32 cases: golden 1.00, red team 10/10, behaviour 4/4,
   resilience 3/3, 0 PII leaks, numeric grounding 0.99).
 * Online (2026-11-16, Gemini free tier and BigQuery): gate passed (golden 0.918, judge 5.0, red team
   8/8, behaviour 4/4, resilience 3/3, p95 38.3 s, $0.09 for 26 cases, 0 PII leaks).
-* Online held-out and ablation: see [EVALUATION.md §4](EVALUATION.md#4-results).
+* Online held-out and ablation (Gemini and BigQuery): golden execution accuracy **1.00 with trios vs
+  0.41 without**. The failures without trios are exactly the cases where a business definition
+  matters (margin, channel value, delivery time). Held-out questions score 1.00 either way, numeric
+  grounding is 0.99, and red-team r9/r10 are refused. Details and caveats in
+  [EVALUATION.md §4](EVALUATION.md#4-results). This is the single strongest argument for
+  requirement 1: *without the analysts' trios, the agent answers fluently with real numbers, but to
+  a slightly different question.*
 
 ---
 

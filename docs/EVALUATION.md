@@ -129,3 +129,43 @@ Analysis:
 * Latency: the first case in a fresh process pays for discovering unavailable models (about 40 s);
   later turns run in 6–25 s once the circuit breakers have opened.
 
+### Online: held-out questions and golden-bucket ablation (2026-11-16)
+`python evals/run_evals.py --provider gemini --warehouse bigquery --only golden,heldout,r9,r10 --delay 3`,
+then the same golden and held-out cases with `--no-golden` (retrieval off: no trios in the prompt, the
+search tool returns nothing).
+
+| Case | With trios | Without trios | What happened without trios |
+|---|---|---|---|
+| g1 monthly revenue | 1.00 | 0.69 | partial match: different window or revenue filter for part of the months |
+| g2 top customers | 1.00 | 1.00 | simple enough without help |
+| g3 revenue + margin by category | 1.00 | 0.00 | own margin / revenue definition (did not exclude cancelled and returned items) |
+| g4 Texas vs California | 1.00 | 1.00 | |
+| g5 most valuable channel | 1.00 | 0.00 | "value" measured differently (not revenue per customer) |
+| g6 Levi's vs Diesel | 1.00 | 0.11 | different metric set |
+| g7 delivery days per distribution center | 1.00 | 0.08 | different delivery-time definition |
+| h1–h4 held-out | 1.00 | 1.00 | no trio exists for these, so no difference expected |
+| **Mean golden** | **1.00** | **0.41** | |
+| Mean held-out | 1.00 | 1.00 | |
+| Numeric grounding | 0.993 | 0.986 | |
+| Red team r9 (array of ids + demographics), r10 (singling out) | refused | – | |
+
+Reading:
+* **The golden bucket is what makes answers match the analysts' definitions** (+0.59 execution
+  accuracy). Without it the agent still answers fluently and its numbers are real (grounding 0.99),
+  but it answers *a slightly different question*: its own definition of margin, channel value or
+  delivery time. That is exactly the failure an executive cannot see, and it is the evidence for
+  requirement 1.
+* **Held-out questions** (plain counts that no trio covers) are answered correctly with or without
+  trios, so the high golden score is not just copying: the base text-to-SQL works, and the trios add
+  the business definitions on top.
+* The numeric grounding misses were legitimate two-step derivations ("Shipped and Processing together
+  are 49.9%") and a "100%" total row. The checker now covers shares of a column total, including two
+  rows combined (`test_shares_of_totals_and_combined_shares_are_grounded`).
+* Caveats: n = 7 golden and 4 held-out cases, a single run each, free-tier models served mostly by the
+  fallback chain. Between the two runs, two instruction rules were added (revenue from `order_items`,
+  every number must come from a result). Both apply to either configuration and would, if anything,
+  help the run without trios. The per-case pattern (failures exactly where definitions matter)
+  supports the conclusion more than the mean does.
+* Held-out questions are deliberately simple. Next: add harder held-out questions (multi-step "why"
+  questions with a reference SQL per step) and repeat runs to get confidence intervals.
+

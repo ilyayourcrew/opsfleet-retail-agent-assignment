@@ -6,7 +6,7 @@ we look for a source among:
 
 * the values of the result sets this turn produced (as returned, or x100 for rates),
 * simple derivations an analyst would state: column totals and means, differences, ratios, shares
-  and percentage changes between two result values.
+  of a column total (also of two rows combined) and percentage changes between two result values.
 
 Matching respects the precision the model displayed ("$1.2M" matches 1,234,567; "11.6%" matches a
 0.1163 change). Years, dates, times, list markers and small integers (ranks, months, "top 10") are
@@ -81,9 +81,24 @@ def _source_values(frames: list[pd.DataFrame]) -> list[float]:
     return vals
 
 
+def _column_shares(frames: list[pd.DataFrame]) -> list[float]:
+    """Shares of a column total, incl. combined shares of two rows ("Shipped + Processing = 49.9%")."""
+    out: list[float] = [100.0]
+    for df in frames:
+        for c in df.select_dtypes("number").columns:
+            col = [float(v) for v in df[c].dropna().tolist() if math.isfinite(float(v))][:MAX_SOURCE_VALUES]
+            total = sum(col)
+            if not total:
+                continue
+            out.extend(v / total * 100 for v in col)
+            for x, y in itertools.combinations(col, 2):
+                out.extend([x + y, (x + y) / total * 100])
+    return out
+
+
 def _candidates(frames: list[pd.DataFrame]) -> list[float]:
     base = _source_values(frames)
-    cands = list(base) + [v * 100 for v in base]
+    cands = list(base) + [v * 100 for v in base] + _column_shares(frames)
     head = base[: MAX_SOURCE_VALUES]
     for a, b in itertools.permutations(head, 2):
         cands.append(a - b)
