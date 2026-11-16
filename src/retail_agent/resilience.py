@@ -64,6 +64,12 @@ class CircuitBreaker:
             self._failures = 0
             self._opened_at = None
 
+    def trip(self) -> None:
+        """Open immediately (for failures known to persist: quota exhausted, deadline exceeded)."""
+        with self._lock:
+            self._failures = self.failure_threshold
+            self._opened_at = time.monotonic()
+
     def record_failure(self) -> None:
         with self._lock:
             self._failures += 1

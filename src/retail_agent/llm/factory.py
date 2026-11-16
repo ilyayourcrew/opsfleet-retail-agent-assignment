@@ -16,7 +16,7 @@ from google.adk.models import BaseLlm
 from google.genai import types
 
 from retail_agent.config import Settings
-from retail_agent.llm.fake import ChaosLlm, RuleBasedLlm
+from retail_agent.llm.fake import BreakerLlm, ChaosLlm, RuleBasedLlm
 from retail_agent.resilience import CircuitBreaker
 
 RETRIABLE = [429, 500, 502, 503, 504]
@@ -31,29 +31,37 @@ def _export_key(settings: Settings) -> None:
 def build_model(settings: Settings, chaos_rate: float = 0.0) -> BaseLlm:
     warnings.filterwarnings("ignore", message=".*FALLBACK_MODEL.*")
     warnings.filterwarnings("ignore", category=UserWarning, module="google.adk")
+    chain: list[BaseLlm]
     if settings.llm_provider == "fake":
-        primary: BaseLlm = RuleBasedLlm()
-        fallback: BaseLlm = RuleBasedLlm(model="rule-based-offline-fallback")
+        chain = [RuleBasedLlm(), RuleBasedLlm(model="rule-based-offline-fallback")]
     elif settings.llm_provider == "ollama":
         from google.adk.models.lite_llm import LiteLlm
 
-        primary = LiteLlm(model=settings.ollama_model)
-        fallback = RuleBasedLlm(model="rule-based-offline-fallback")
+        chain = [LiteLlm(model=settings.ollama_model), RuleBasedLlm(model="rule-based-offline-fallback")]
     else:
         from google.adk.models import Gemini
 
         _export_key(settings)
-        retry = types.HttpRetryOptions(
-            attempts=settings.llm_retry_attempts, initial_delay=1.0, max_delay=8.0, exp_base=2.0,
-            http_status_codes=RETRIABLE,
-        )
-        primary = Gemini(model=settings.model_primary, retry_options=retry)
-        fallback = Gemini(model=settings.model_fallback, retry_options=types.HttpRetryOptions(attempts=2, initial_delay=1.0))
+
+        def gemini(name: str, last: bool) -> BaseLlm:
+            # Non-last models: one quick retry on 5xx only; 429 (quota) goes straight to the next model.
+            # Last model: full retry policy incl. 429, because there is nothing left to fall back to.
+            retry = types.HttpRetryOptions(
+                attempts=settings.llm_retry_attempts if last else 2, initial_delay=1.0, max_delay=8.0, exp_base=2.0,
+                http_status_codes=RETRIABLE if last else [500, 502, 503],
+            )
+            return Gemini(model=name, retry_options=retry)
+
+        names = [settings.model_primary, *settings.fallback_models]
+        chain = [gemini(n, last=i == len(names) - 1) for i, n in enumerate(names)]
+        # skip a model whose recent calls keep failing (no latency paid while it is overloaded)
+        chain = [BreakerLlm(inner=m, model=m.model, timeout_s=settings.llm_attempt_timeout_s) if i < len(chain) - 1 else m
+                 for i, m in enumerate(chain)]
     if chaos_rate > 0:
-        primary = ChaosLlm(inner=primary, failure_rate=chaos_rate, model=f"chaos({primary.model})")
+        chain[0] = ChaosLlm(inner=chain[0], failure_rate=chaos_rate, model=f"chaos({chain[0].model})")
     from google.adk.models import FallbackModel
 
-    return FallbackModel(models=[primary, fallback])
+    return FallbackModel(models=chain)
 
 
 def build_classifier(settings: Settings) -> Callable[[str], str] | None:
@@ -70,12 +78,11 @@ def build_classifier(settings: Settings) -> Callable[[str], str] | None:
         response_mime_type="application/json",
         max_output_tokens=200,
         http_options=types.HttpOptions(timeout=10_000),
-        thinking_config=types.ThinkingConfig(thinking_budget=0),
     )
 
     def classify(prompt: str) -> str:
         def call() -> str:
-            r = client.models.generate_content(model=settings.model_fallback, contents=prompt, config=cfg)
+            r = client.models.generate_content(model=settings.model_light, contents=prompt, config=cfg)
             return r.text or ""
 
         return breaker.call(call)

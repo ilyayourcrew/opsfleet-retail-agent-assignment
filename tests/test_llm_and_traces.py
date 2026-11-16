@@ -40,3 +40,28 @@ def test_trace_store_roundtrip_and_metrics(tmp_path):
     m = compute_metrics(store)
     assert m["turns"] == 1 and m["sql_failure_rate"] == 0.5 and m["feedback_positive_rate"] == 1.0
     assert (tmp_path / "t.jsonl").read_text().count("abc123") >= 1
+
+
+async def test_slow_model_times_out_into_fallback_and_breaker_skips_it():
+    import asyncio
+
+    from retail_agent.llm.fake import _BREAKERS, BreakerLlm
+
+    class SlowLlm(ScriptedLlm):
+        async def generate_content_async(self, llm_request, stream=False):
+            await asyncio.sleep(5)
+            yield text_response("too late")
+
+    _BREAKERS.clear()
+    slow = BreakerLlm(inner=SlowLlm(model="slow-model"), model="slow-model", timeout_s=0.2)
+    backup = ScriptedLlm(steps=[text_response("fast backup")] * 3, model="backup")
+    model = FallbackModel(models=[slow, backup])
+    import time
+
+    t0 = time.perf_counter()
+    for _ in range(3):
+        out = await _collect(model, _req("hi"))
+        assert out[0].content.parts[0].text == "fast backup"
+    # two timeouts open the breaker; the third call skips the slow model instantly
+    assert time.perf_counter() - t0 < 1.0
+    assert _BREAKERS["slow-model"].state == "open"

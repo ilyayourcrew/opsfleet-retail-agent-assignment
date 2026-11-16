@@ -28,11 +28,16 @@ class Settings(BaseSettings):
     # --- LLM ---------------------------------------------------------------------------
     llm_provider: Literal["gemini", "ollama", "fake"] = "gemini"
     google_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
-    model_primary: str = "gemini-2.5-flash"
-    model_fallback: str = "gemini-2.5-flash-lite"
+    model_primary: str = "gemini-3.8-flash"
+    # comma-separated fallback chain, tried in order on 429/5xx (different models = separate capacity)
+    model_fallback: str = "gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite"
+    # cheap model for side tasks: input-scope classifier, promotion / eval judge
+    model_light: str = "gemini-3.5-flash-lite"
     ollama_model: str = "ollama_chat/qwen2.5:7b"
     embedding_model: str = "gemini-embedding-001"
     llm_timeout_s: float = 60.0
+    # deadline per attempt for every model except the last in the chain (slow -> fall back)
+    llm_attempt_timeout_s: float = 20.0
     llm_retry_attempts: int = 3
     # USD per 1M tokens (input, output) used by the cost meter. Defaults match Gemini Flash list
     # prices at the time of writing; override per deployment.
@@ -67,6 +72,10 @@ class Settings(BaseSettings):
     config_dir: Path = PROJECT_ROOT / "config"
     golden_dir: Path = PROJECT_ROOT / "data" / "golden"
     state_dir: Path = PROJECT_ROOT / "var"
+
+    @property
+    def fallback_models(self) -> list[str]:
+        return [m.strip() for m in self.model_fallback.split(",") if m.strip()]
 
     @property
     def app_db_path(self) -> Path:

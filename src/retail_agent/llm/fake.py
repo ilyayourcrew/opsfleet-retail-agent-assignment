@@ -294,3 +294,68 @@ class ChaosLlm(BaseLlm):
             raise ChaosLlmError("Injected fault: model 503 Service Unavailable")
         async for r in self.inner.generate_content_async(llm_request, stream):
             yield r
+
+
+class ModelUnavailableError(RuntimeError):
+    """Raised for a model that is skipped (circuit open) or too slow; carries a retriable status so
+    ADK's FallbackModel moves on to the next model in the chain."""
+
+    def __init__(self, message: str, status_code: int = 503):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+_BREAKERS: dict[str, Any] = {}  # process-wide health per model name
+
+
+def model_breaker(name: str, failure_threshold: int = 2, reset_timeout_s: float = 60.0):
+    from retail_agent.resilience import CircuitBreaker
+
+    if name not in _BREAKERS:
+        _BREAKERS[name] = CircuitBreaker(f"model:{name}", failure_threshold, reset_timeout_s)
+    return _BREAKERS[name]
+
+
+class BreakerLlm(BaseLlm):
+    """Per-model circuit breaker + per-attempt deadline in front of a real model.
+
+    * open circuit  -> fail instantly (no network, no latency) so the next model answers;
+    * slow response -> after `timeout_s` give up on this model and fall back (ADK's FallbackModel
+      only reacts to status codes, so a hanging model would otherwise blow the latency budget).
+    """
+
+    model: str = "breaker"
+    inner: BaseLlm
+    timeout_s: float = 25.0
+
+    async def generate_content_async(self, llm_request: LlmRequest, stream: bool = False) -> AsyncGenerator[LlmResponse, None]:
+        import asyncio
+
+        from retail_agent.resilience import CircuitOpenError
+
+        breaker = model_breaker(self.inner.model)
+        try:
+            breaker.before_call()
+        except CircuitOpenError as e:
+            raise ModelUnavailableError(str(e), 503) from e
+        agen = self.inner.generate_content_async(llm_request, stream)
+        try:
+            first = await asyncio.wait_for(agen.__anext__(), timeout=self.timeout_s)
+        except StopAsyncIteration:
+            breaker.record_success()
+            return
+        except TimeoutError as e:
+            breaker.trip()  # a model that blew the deadline will likely do it again: skip it for a while
+            await agen.aclose()
+            raise ModelUnavailableError(f"{self.inner.model} did not answer within {self.timeout_s:.0f}s", 504) from e
+        except Exception as e:
+            code = getattr(e, "code", None) or getattr(e, "status_code", None)
+            if code in (429, 504):
+                breaker.trip()  # quota exhausted / server deadline: persists, skip immediately
+            elif code in (500, 502, 503):
+                breaker.record_failure()
+            raise
+        breaker.record_success()
+        yield first
+        async for r in agen:
+            yield r
