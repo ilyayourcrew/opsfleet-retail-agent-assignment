@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import re
 import sys
@@ -82,10 +83,8 @@ async def run_case(case: dict, base: Settings, judge) -> dict:
         for df in services.session_results.get(sid, {}).values():
             agent_nums |= numbers_in(df)
         for m in re.findall(r"-?\d[\d,]*\.?\d*", r.answer):  # numbers quoted in the answer also count
-            try:
+            with contextlib.suppress(ValueError):
                 agent_nums.add(round(float(m.replace(",", "")), 1))
-            except ValueError:
-                pass
         score = len(ref_nums & agent_nums) / len(ref_nums) if ref_nums else 0.0
         out["execution_accuracy"] = round(score, 3)
         out["passed"] = score >= 0.5 and pii.total == 0
