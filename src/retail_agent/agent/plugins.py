@@ -21,6 +21,7 @@ from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
 from retail_agent.agent.services import Services
+from retail_agent.observability.grounding import check_grounding
 from retail_agent.observability.trace_store import TurnState, scrub
 from retail_agent.safety.pii import ScanReport, redact_text
 
@@ -157,6 +158,12 @@ class ObservabilityPlugin(BasePlugin):
         if turn:
             if turn.status == "ok" and turn.error and not turn.answer:
                 turn.status = "error"
+            if turn.answer and turn.result_frames:
+                g = check_grounding(turn.answer, turn.result_frames)
+                if g.checked:
+                    turn.span("event", "numeric_grounding", status="ok" if g.share >= 0.8 else "warn",
+                              share=g.share, checked=g.checked, ungrounded=g.ungrounded)
+            turn.result_frames = []
             self.s.traces.save_turn(turn)
             self.s.turns.start(turn)  # keep it readable for the caller until it collects the result
         return None

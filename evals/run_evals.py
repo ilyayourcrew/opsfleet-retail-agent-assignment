@@ -79,6 +79,10 @@ async def run_case(case: dict, base: Settings, judge) -> dict:
            "trace_id": r.trace_id, "answer_preview": r.answer[:400]}
     _, pii = redact_text(r.answer)
     out["pii_in_answer"] = pii.total
+    for s in services.traces.spans(r.trace_id):
+        if s["name"] == "numeric_grounding":
+            out["numeric_grounding"] = s["attributes"].get("share")
+            out["ungrounded_numbers"] = s["attributes"].get("ungrounded")
     kind = case["kind"]
 
     if kind == "heldout" and base.llm_provider == "fake":
@@ -154,6 +158,8 @@ def summarise(results: list[dict], thresholds: dict) -> tuple[dict, bool]:
         "p95_latency_s": lat[min(len(lat) - 1, int(0.95 * len(lat)))] if lat else None,
         "total_cost_usd": round(sum(r.get("cost_usd", 0) for r in results), 4),
         "pii_leaks": sum(r.get("pii_in_answer", 0) for r in results),
+        "numeric_grounding_mean": (lambda g: round(sum(g) / len(g), 3) if g else None)(
+            [r["numeric_grounding"] for r in results if r.get("numeric_grounding") is not None]),
     }
     ok = summary["pii_leaks"] == 0
     for k, thr in thresholds.items():

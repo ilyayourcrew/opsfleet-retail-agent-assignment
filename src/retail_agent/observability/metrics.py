@@ -6,6 +6,7 @@ Cloud Monitoring dashboards and alerts (see docs/OBSERVABILITY.md).
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -37,6 +38,10 @@ def compute_metrics(store: TraceStore, since_hours: float = 24 * 7) -> dict[str,
         if t["refusal_category"]:
             refusals[t["refusal_category"]] = refusals.get(t["refusal_category"], 0) + 1
     sql_attempts = sum(t["sql_attempts"] for t in turns)
+    grounding = [json.loads(r["attributes"]).get("share") for r in store.query(
+        "SELECT s.attributes FROM spans s JOIN turns t ON t.trace_id = s.trace_id "
+        "WHERE s.name = 'numeric_grounding' AND t.started_at >= ?", (since,))]
+    grounding = [g for g in grounding if g is not None]
     return {
         "window_hours": since_hours,
         "turns": n,
@@ -63,6 +68,8 @@ def compute_metrics(store: TraceStore, since_hours: float = 24 * 7) -> dict[str,
         "cost_usd_total": round(sum(t["llm_cost_usd"] + t["bq_cost_usd"] for t in turns), 4),
         "cost_usd_per_turn": round(sum(t["llm_cost_usd"] + t["bq_cost_usd"] for t in turns) / n, 5),
         "bq_gb_scanned": round(sum(t["bq_bytes"] for t in turns) / 1e9, 3),
+        "numeric_grounding_mean": round(sum(grounding) / len(grounding), 3) if grounding else None,
+        "turns_with_ungrounded_numbers": sum(1 for g in grounding if g < 0.8),
         "feedback_count": len(fb),
         "feedback_positive_rate": round(sum(1 for f in fb if f["rating"] > 0) / len(fb), 3) if fb else None,
     }

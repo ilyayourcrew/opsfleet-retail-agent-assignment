@@ -102,6 +102,7 @@ class TurnState:
     persona: str = ""
     golden_ids: list[str] = field(default_factory=list)
     spans: list[Span] = field(default_factory=list)
+    result_frames: list[Any] = field(default_factory=list)  # this turn's guarded results (memory only)
     _open: dict[str, float] = field(default_factory=dict)
 
     @property

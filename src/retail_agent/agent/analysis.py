@@ -174,6 +174,7 @@ class AnalysisService:
 
         query_id = f"q{turn.sql_attempts}-{turn.trace_id[:6]}"
         self.s.remember_result(session_id, query_id, df)
+        turn.result_frames.append(df)  # for the numeric grounding check at the end of the turn
         payload: dict[str, Any] = {
             "status": "ok",
             "query_id": query_id,
