@@ -19,6 +19,7 @@ Ollama or a deterministic model).
 | Example run (real transcripts) | [docs/EXAMPLE_RUN.md](docs/EXAMPLE_RUN.md) |
 | Assumptions and client answers | [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md) |
 | Requirement → design → code → test | [docs/REQUIREMENTS_TRACEABILITY.md](docs/REQUIREMENTS_TRACEABILITY.md) |
+| Design decisions: alternatives, trade-offs, review findings, roadmap | [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md) |
 
 ## What it does
 
@@ -31,17 +32,20 @@ Ollama or a deterministic model).
   message and follows their metric definitions and interpretation.
 * **Safety & PII** *(required in prototype)*: PII columns are physically unreachable (SQL rewritten onto
   PII-free views), demographics only in aggregates of at least 5 customers (k-anonymity injected by the
-  SQL guard), value-level PII scanning of results and answers, pseudonymous customer ids, per-user
-  product entitlements, prompt-injection and off-topic guard.
+  SQL guard, which also blocks list-aggregate and singling-out bypasses), value-level PII scanning of
+  results, answers and traces, pseudonymous customer ids, per-user product entitlements,
+  prompt-injection and off-topic guard.
 * **High-stakes oversight** *(required)*: the model can only *request* a deletion; the CLI shows the
   exact reports and the user must type `DELETE <n>`. The confirmation is token-bound (user, conversation,
-  snapshot, 5-minute TTL, single use) and executed by deterministic code.
+  snapshot, 5-minute TTL, single use) and executed by deterministic code. Hard delete means the text is
+  not recoverable from storage (secure delete), and traces never keep report bodies.
 * **Resilience** *(required)*: dry-run + byte caps, self-correction with structured hints and
   empty-result diagnostics, at most 3 failed attempts, $/call budgets per question, retries + circuit
   breaker for BigQuery, Gemini retry + fallback model, degraded answers from the golden library if all
   models are down, and an error boundary so the CLI never crashes. Fault injection flags included.
 * **Observability** *(required)*: per-turn traces of every model message, tool call, SQL attempt
-  (original and rewritten), guard decision, tokens and cost; `trace` and `stats` commands.
+  (original and rewritten), guard decision, tokens and cost, plus a numeric grounding check (are the
+  numbers in the answer from the query results?); `trace` and `stats` commands.
 * **Learning loop**: explicit and implicit per-user preferences (tables vs bullets, depth, charts);
   positively rated conversations become candidate trios that pass an automated promotion gate.
 * **Persona agility**: tone and report structure in YAML, published through an automated quality gate,
@@ -99,9 +103,10 @@ retail-agent chat --provider ollama --warehouse duckdb     # local LLM (set RA_O
 
 ### Tests and evaluation
 ```bash
-pytest                                   # ~100 offline tests (unit, adversarial, end-to-end), ~15 s
+pytest                                   # ~125 offline tests (unit, adversarial, end-to-end), ~15 s
 python evals/run_evals.py                # offline eval gate
 python evals/run_evals.py --provider gemini --warehouse bigquery --delay 3   # online eval gate
+python evals/run_evals.py --provider gemini --warehouse bigquery --only golden,heldout --no-golden  # ablation: value of the golden bucket
 python scripts/smoke_online.py           # live schema drift check + all golden trios on BigQuery + Gemini ping
 ```
 
@@ -161,7 +166,8 @@ Full real transcripts (online and offline), traces and eval output: [docs/EXAMPL
 
 What I deliberately did **not** delegate to the framework: the deletion confirmation (ADK's tool
 confirmation is experimental; ours is token-bound and deterministic) and SQL safety (enforced by an AST
-guard, not by instructions). Details: [TECHNICAL_DESIGN §2](docs/TECHNICAL_DESIGN.md#2-technology-choices).
+guard, not by instructions). Details: [TECHNICAL_DESIGN §2](docs/TECHNICAL_DESIGN.md#2-technology-choices); alternatives, trade-offs and
+review findings: [DESIGN_DECISIONS](docs/DESIGN_DECISIONS.md).
 
 ## Repository layout
 ```

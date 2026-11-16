@@ -21,6 +21,7 @@ sink in production).
 | `guard/*` | budget exceeded, attempts exhausted, output / tool-output PII redacted (with finding types) |
 | `error/*` | model or tool exception type and message |
 | `event/deletion_requested`, `event/chart_created` | ids, paths |
+| `event/numeric_grounding` | share of numbers in the answer traced to this turn's results, the ungrounded ones (status `warn` below 0.8) |
 
 The **turn row** aggregates: user, session, question, answer preview, status
 (`ok | refused | error | degraded | budget_exceeded | timeout`), refusal category, latency, model calls,
@@ -28,8 +29,12 @@ tool calls, SQL attempts / failures / empties / self-corrections, guard blocks, 
 LLM $ and BigQuery $, fallback used, degraded, persona version, golden trio ids, provider.
 Feedback (`/feedback + | - comment`) is joined by trace id.
 
-Privacy of telemetry: result sets are PII-free by construction, so spans contain SQL and
-aggregated previews, never personal data. Answers are stored after output redaction.
+Privacy of telemetry: result sets are PII-free by construction, and the trace store additionally
+**scrubs everything at write time** (questions users type, model text, tool arguments, previews) with
+the same value-shape redactor, because logs are where PII leaks are least noticed. Saved-report bodies
+are never logged (only their length), so the hard delete of a report is not undone by its traces.
+Retention: 30 days for spans in production (Cloud Logging bucket retention), turn-level metrics kept
+longer.
 
 ## 2. Agent-level metrics
 
@@ -54,6 +59,7 @@ same definitions as scheduled queries over the log sink, feeding Cloud Monitorin
 | Budget-exceeded turns | stopped by $ / call caps | cost runaways, loops | > 1% |
 | Cost per turn, total | LLM tokens × price + BigQuery bytes × price | budget ($1/question) | daily total > 2× forecast |
 | Tokens in/out | sums | prompt bloat | trend |
+| Numeric grounding | mean share of answer numbers traced to query results; turns below 0.8 | hallucinated figures in answers and reports | mean < 0.9 daily; low turns go to the review queue |
 | Feedback positive rate | 👍 / rated turns | perceived quality | < 70% weekly |
 | Golden trio hit rate | turns with ≥ 1 retrieved trio | knowledge coverage gaps | trend |
 

@@ -14,8 +14,16 @@ generated reports answer the user's intent? How do we evaluate UX?*
 | Production monitoring | sampled LLM-judge of live answers, feedback, metrics and alerts ([OBSERVABILITY.md](OBSERVABILITY.md)) | continuous | – |
 
 ### Release gate thresholds (`evals/cases.yaml`)
-golden execution accuracy ≥ 0.70 · judge mean ≥ 3.5/5 · red-team pass = 100% · behaviour ≥ 90% ·
-resilience = 100% · p95 latency ≤ 60 s · **PII leaks in answers = 0** (hard fail).
+golden execution accuracy ≥ 0.70 · **held-out execution accuracy ≥ 0.60** · judge mean ≥ 3.5/5 ·
+red-team pass = 100% · behaviour ≥ 90% · resilience = 100% · p95 latency ≤ 60 s · **PII leaks in
+answers = 0** (hard fail). Numeric grounding is reported alongside (not gated yet, see §2).
+
+Why these numbers: they are starting points chosen so that the current system passes with a margin
+and a real regression fails. Each threshold should be re-set from the distribution of a few weeks of
+nightly runs (mean minus two standard deviations), and the case set grows from production failures.
+26 to 32 cases is enough to catch gross regressions, not to estimate accuracy to ±5%; the confidence
+interval at n = 7 is wide, which is why the gate averages across cases and why held-out cases were
+added.
 
 ## 2. Verifying that answers and reports match intent
 
@@ -23,14 +31,26 @@ resilience = 100% · p95 latency ≤ 60 s · **PII leaks in answers = 0** (hard 
    questions ("List our ten biggest customers by how much they spent"). The reference trio SQL is run
    through the same guard; the score is the share of the reference result's numbers that appear in
    the agent's query results or answer. This tests the semantics (right metric, filters, window), not
-   SQL text similarity, and tolerates different but equivalent SQL.
-2. **LLM-as-judge** with a *different* model from the agent (Flash-Lite judging Flash), with a rubric:
+   SQL text similarity, and tolerates different but equivalent SQL. Small integers (ranks, months,
+   tiny counts) are ignored because they match by coincidence.
+   *Leakage caveat:* the reference trio is also what retrieval injects into the prompt, so golden
+   cases partly measure "did the agent use the right precedent". Two additions separate that from
+   real text-to-SQL ability:
+   * **Held-out cases** (`kind: heldout`): questions no trio covers, each with its own reference SQL
+     in `cases.yaml` (validated by `tests/test_evals.py`).
+   * **Ablation** (`--no-golden`): the same golden and held-out cases with retrieval switched off. The
+     difference is the measured value of the golden bucket, which is the evidence behind requirement 1.
+2. **Numeric grounding** (`observability/grounding.py`), deterministic and run on every turn: each
+   number in the answer must match, at the precision displayed, a value of this turn's results or a
+   simple derivation (totals, means, differences, ratios, shares, % changes). It catches invented
+   figures in reports, which an LLM judge often misses because invented numbers look plausible.
+3. **LLM-as-judge** with a *different* model from the agent (Flash-Lite judging Flash), with a rubric:
    intent (answers what was asked), grounding (concrete numbers, no invented facts), actionability, and
    clarity, each 1–5. Rubric scores are more stable than a single "is it good?" score; judge drift is
    controlled by keeping a small human-labelled calibration set.
-3. **Structural checks on reports**: a saved report must contain the persona's sections and action
+4. **Structural checks on reports**: a saved report must contain the persona's sections and action
    items with owners (also enforced by the persona quality gate).
-4. **In production**: nightly judge on a sample of real turns and reports; answers below threshold are
+5. **In production**: nightly judge on a sample of real turns and reports; answers below threshold are
    routed to analysts, and the corrected version becomes a candidate trio (closing the learning loop);
    explicit 👍/👎 per answer; "rephrase rate" (the user asks the same thing again within 2 turns) as an
    implicit intent-miss signal.

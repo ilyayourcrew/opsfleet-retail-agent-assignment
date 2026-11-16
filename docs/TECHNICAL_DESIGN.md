@@ -116,8 +116,10 @@ network or credentials.
 * **What the LLM sees:** instructions, conversation history, *guarded* result samples and tool messages.
   No PII column can be selected, and value-level scanning covers anything unexpected.
 * **What is persisted:** conversation events (ADK session store), saved reports (owner-scoped), user
-  preferences, persona versions, pending deletion tokens (TTL), audit log of report actions, traces
-  (spans contain SQL and redacted answers, never raw PII because results are PII-free).
+  preferences, persona versions, pending deletion tokens (TTL), audit log of report actions (ids and
+  counts only), traces. Traces are a data sink too, so they are **PII-scrubbed at write time** (user
+  questions, model text, tool arguments and previews) and never contain saved-report bodies (only
+  their length); a deleted report therefore does not live on in the logs.
 * **Golden trios** live in GCS (prototype: `data/golden/trios/*.yaml`), embeddings in BigQuery
   (prototype: `var/golden_embeddings.json` cache keyed by content hash).
 
@@ -187,7 +189,7 @@ Defence in depth: each layer assumes the previous one failed.
 | 2. Input guard | Heuristics (prompt injection, data-mutation intent, requests for personal data) fail **closed**; Flash-Lite scope classifier (off-topic / malicious) fails **open** if unavailable, because data-layer controls still apply. Blocked turns never reach the model. | `safety/input_guard.py` |
 | 3. Instructions | Scope and privacy rules rendered *after* persona/preferences so they cannot be overridden by edits. | `agent/instructions.py` |
 | 4. **SQL guard (structural)** | Single read-only `SELECT`; DML/DDL/scripting nodes denied anywhere; allowlist of the four tables (no `INFORMATION_SCHEMA`, wildcards, other datasets, table functions, exfiltration functions); CTEs may not shadow table names. **Every table is rewritten into a policy sub-query that physically lacks PII columns** and carries the user's entitlement filter; the query is then qualified against that PII-free schema, so `SELECT *`, `u.*`, `TO_JSON_STRING(u)` cannot reach PII. Whole-row struct references are rejected. | `safety/sql_guard.py` |
-| 5. Quasi-identifiers and k-anonymity | Column lineage over sqlglot scopes tracks which outputs carry raw demographics and customer ids. Raw demographics may not appear in final rows; any aggregation that *touches* demographics (keys, values or filters, directly or via a sub-query/CTE) gets `HAVING COUNT(DISTINCT customer_id) >= k` injected (k = 5, `RA_K_ANONYMITY_MIN` / `policy.yaml`). Row-level results filtered by demographics are rejected. | `safety/sql_guard.py` |
+| 5. Quasi-identifiers and k-anonymity | Column lineage over sqlglot scopes tracks which outputs carry raw demographics and customer ids. Raw demographics may not appear in final rows; any aggregation that *touches* demographics (keys, values or filters, directly or via a sub-query/CTE) gets `HAVING COUNT(DISTINCT customer_id) >= k` injected (k = 5, `RA_K_ANONYMITY_MIN` / `policy.yaml`). Row-level results filtered by demographics are rejected. Two classic bypasses are closed explicitly: **list-building aggregates** (`ARRAY_AGG(STRUCT(id, city, age))`, `STRING_AGG`, `APPROX_TOP_COUNT`, `APPROX_QUANTILES`) may not carry customer ids or demographics, because they enumerate each member of a "k-anonymous" group; and **singling out**: in a query that uses demographics, customer ids may not be compared with literals (`MAX(CASE WHEN id = 123 THEN age END)` passes k but reveals one person). | `safety/sql_guard.py` |
 | 6. Value-level scanning | Result sets are scanned by **content shape**, not column name: e-mails, phones, street addresses, coordinate pairs, IPs, Luhn-valid card numbers, columns whose values mostly look like postal codes or raw coordinates. Matches are masked before the model sees them. | `safety/pii.py` |
 | 7. Pseudonymisation | Customer ids in results are replaced by keyed HMAC tokens (`C-1a2b3c4d`), stable for follow-ups, irreversible without the secret. | `safety/pii.py` |
 | 8. Output guard | Every model text part, every saved report and every tool result is redacted again before display or storage. | `agent/plugins.py`, `tools/builtin.py` |
@@ -204,10 +206,15 @@ demographics) is computed only over the user's slice. Tested in `tests/test_safe
 agent has no tools other than analysis, reports, preferences and charts.
 
 Known limits (documented, not hidden): k-anonymity per query does not stop *differencing* attacks
-across many queries (mitigation in production: query auditing, rate limits per user, minimum-group
-checks on differences, engine-level aggregation thresholds). Person-name detection in free text relies
-on structural removal (names are never selectable) rather than NER; DLP inspection is the production
-add-on.
+across many queries (total minus "total without X"), nor singling out through other near-unique
+values (an exact timestamp). Two facts bound the risk: direct identifiers are physically unreachable,
+so the worst case is learning a demographic attribute of a *pseudonymous* customer; and the users are
+authenticated internal executives with audited queries. Production mitigations, in order of
+strength: BigQuery **aggregation threshold analysis rules** (k enforced by the engine, per privacy
+unit), BigQuery **differential privacy** (`SELECT WITH DIFFERENTIAL_PRIVACY`, noise plus a per-user
+privacy budget, the only formal defence against differencing), query auditing and per-user rate
+limits. Person-name detection in free text relies on structural removal (names are never selectable)
+rather than NER; DLP inspection is the production add-on.
 
 ### 4.3 High-stakes oversight: destructive operations (R3)
 
@@ -224,7 +231,17 @@ Principle: **the model can only ask for a deletion; it can never perform one.**
   the user to type **`DELETE <n>`**. Only then does deterministic code call
   `ReportStore.confirm(token, owner, session, typed)`, which re-checks: token valid and unused,
   same owner, same session, not expired, phrase exact, reports still exist and are unchanged
-  (snapshot). Then it runs a transactional hard delete and writes an audit record.
+  (snapshot). Then it runs a transactional hard delete and writes an audit record. Single use is an
+  atomic compare-and-set (`UPDATE ... WHERE status = 'pending'` inside `BEGIN IMMEDIATE`), so two
+  concurrent confirmations cannot both execute.
+* **"Hard delete, no recovery" is meant literally.** A plain `DELETE` in SQLite (and most databases)
+  only marks pages free; the text stays readable in the file until overwritten. The store runs with
+  `PRAGMA secure_delete = ON` and FTS5 `secure-delete`, so the bytes are zeroed and the search index
+  forgets the tokens (a test reads the raw database file to prove it). The audit log keeps ids and
+  counts, never titles or content; traces never store report bodies. In production the equivalent is
+  a Firestore document delete (no soft-delete layer) with backups excluded or expiring within the
+  retention window the client accepts. Conversation transcripts follow the session retention policy
+  (default 30 days), which is a separate decision from report deletion and is called out to the client.
 * A wrong phrase or Enter cancels (and consumes the token). Expired, stale or cross-user tokens are
   rejected with a clear message. The next instruction tells the model what happened ("reports #3, #4:
   DELETED (confirmed by the user)") so the conversation stays coherent.
@@ -299,10 +316,14 @@ Summary here; full detail and results in [EVALUATION.md](EVALUATION.md).
   red-team pass rate = 100%, behaviour and resilience pass rates, p95 latency, **zero PII leaks**. The
   same suite runs against Gemini + BigQuery before each release and gates persona and prompt changes.
 * **Does the report answer the intent?** (1) Execution accuracy against analyst trios for paraphrased
-  questions (do the agent's numbers match the reference result?); (2) an LLM judge (different model
-  from the agent) scores intent, grounding, actionability and clarity; (3) in production, a sample of
-  live reports is judged nightly and low scores are routed to analysts. Thumbs up/down and "rephrase
-  rate" are the user-side signals.
+  questions (do the agent's numbers match the reference result?); (2) **held-out** questions that no
+  trio covers, with their own reference SQL, so the score measures generalisation and not copying of
+  a retrieved example, plus a `--no-golden` **ablation** that measures what the golden bucket adds;
+  (3) an LLM judge (different model from the agent) scores intent, grounding, actionability and
+  clarity; (4) a deterministic **numeric grounding** check on every turn: each number in the answer
+  must come from this turn's results or a simple derivation of them (`observability/grounding.py`);
+  (5) in production, a sample of live reports is judged nightly and low scores are routed to analysts.
+  Thumbs up/down and "rephrase rate" are the user-side signals.
 * **UX:** task success (answer without rephrasing), turns-to-answer, latency p50/p95 against the 10–30 s
   and 1–2 min targets, feedback rate, refusal rate on legitimate questions (false positives), deletion
   confirmation completion and abandonment, plus periodic moderated sessions with 3–5 executives on
@@ -429,8 +450,8 @@ A web search did not surface public solutions of this exact assignment. Related 
 * Golden trios steer interpretation, but a model can over-reuse a trio's *recommendations* (observed in
   the Q1 report example: data-derived KPIs alongside action items echoing the seeded analyst report).
   Mitigations: trio excerpts limited to interpretation plus a short report snippet, an explicit "adapt,
-  don't copy" rule, and the judge's grounding criterion. Next step: a post-generation check that every
-  number and claim in a report traces back to a query result.
+  don't copy" rule, the judge's grounding criterion and the numeric grounding check (every number is
+  traced to a result; qualitative claims are not checked yet).
 * Next: route report intents to a Pro model, prompt caching of the static instruction prefix, streaming
   answers to the CLI, a web chat UI, an admin page for personas and trios, and per-trio quality scores
   learned from feedback.
