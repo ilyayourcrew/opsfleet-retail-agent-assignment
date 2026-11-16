@@ -90,6 +90,7 @@ class ScriptedLlm(BaseLlm):
         resp = resp.model_copy(deep=True)
         out_text = " ".join(p.text or "" for p in (resp.content.parts or [])) if resp.content else ""
         resp.usage_metadata = _usage(llm_request, out_text)
+        resp.model_version = self.model
         yield resp
 
 
@@ -140,6 +141,7 @@ class RuleBasedLlm(BaseLlm):
         resp = self._decide(llm_request)
         out_text = " ".join(p.text or "" for p in (resp.content.parts or [])) if resp.content else ""
         resp.usage_metadata = _usage(llm_request, out_text)
+        resp.model_version = self.model
         yield resp
 
     # ------------------------------------------------------------------ routing

@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     model_primary: str = "gemini-2.5-flash"
     model_fallback: str = "gemini-2.5-flash-lite"
     ollama_model: str = "ollama_chat/qwen2.5:7b"
+    embedding_model: str = "gemini-embedding-001"
     llm_timeout_s: float = 60.0
     llm_retry_attempts: int = 3
     # USD per 1M tokens (input, output) used by the cost meter. Defaults match Gemini Flash list
@@ -59,6 +60,8 @@ class Settings(BaseSettings):
     max_tool_calls_per_turn: int = 12
     budget_usd_per_question: float = 1.0
     golden_top_k: int = 3
+    max_llm_calls_per_turn: int = 15
+    turn_timeout_s: float = 150.0
 
     # --- Storage -------------------------------------------------------------------------
     config_dir: Path = PROJECT_ROOT / "config"
