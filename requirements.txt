@@ -1,27 +1,34 @@
+# Tested set. `pip install -r requirements.txt` installs exactly what the test suite and the online
+# evaluation ran against (Python 3.11-3.14).
+#   ==  : libraries whose *internal* behaviour the safety logic depends on (the SQL guard walks sqlglot's
+#         AST classes; the refusal-history fix depends on how ADK authors early-exit events). Upgrade them
+#         only through a PR that runs the full test suite and the eval gate.
+#   ~=  : patch upgrades allowed (bug/security fixes), no minor-version drift.
+
 # Runtime
-google-adk>=2.14,<3
-google-genai>=2.30
-google-cloud-bigquery>=3.30
-db-dtypes>=1.3
-pandas>=2.2
-duckdb>=1.2
-sqlglot>=26
-pydantic>=2.10
-pydantic-settings>=2.7
-pyyaml>=6
-typer>=0.15
-rich>=13.9
-tenacity>=9
-python-dotenv>=1
-matplotlib>=3.9
+google-adk==2.14.1
+sqlglot==30.32.0
+google-genai~=2.34.0
+google-cloud-bigquery~=3.47.0
+db-dtypes~=1.9.0
+pandas~=3.1.1
+duckdb~=2.0.0
+pydantic~=2.14.3
+pydantic-settings~=2.16.3
+pyyaml~=6.0.3
+typer~=0.29.1
+rich~=15.0.0
+tenacity~=9.1.4
+python-dotenv~=1.2.4
+matplotlib~=3.11.2
 
 # Optional local LLM for offline chat (Ollama through ADK's LiteLlm wrapper)
-litellm>=1.60
+litellm~=1.109.1
 
 # Tests / lint
-pytest>=8
-pytest-asyncio>=0.25
-ruff>=0.9
+pytest~=9.2.0
+pytest-asyncio~=1.5.0
+ruff~=0.17.5
 
 # Install the project itself (src layout) so `retail-agent` and `import retail_agent` work
 -e .

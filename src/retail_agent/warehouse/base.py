@@ -7,13 +7,13 @@ Both receive SQL that has already passed the SQL guard, written in BigQuery dial
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol
 
 import pandas as pd
 
 
-class ErrorKind(str, Enum):
+class ErrorKind(StrEnum):
     """How the caller should react to a failure. Drives the self-correction loop."""
 
     SYNTAX = "syntax"  # invalid SQL / unknown column -> LLM can fix

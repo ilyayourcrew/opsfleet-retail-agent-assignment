@@ -21,6 +21,19 @@ Ollama or a deterministic model).
 | Requirement → design → code → test | [docs/REQUIREMENTS_TRACEABILITY.md](docs/REQUIREMENTS_TRACEABILITY.md) |
 | Design decisions: alternatives, trade-offs, review findings, roadmap | [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md) |
 
+## Reading guide (15 minutes)
+1. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the HLD diagram and the three key flows.
+2. [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md): why each choice, what was rejected, the
+   review findings and the roadmap.
+3. Code, in the order a question flows through it:
+   [`agent/engine.py`](src/retail_agent/agent/engine.py) (ADK wiring, error boundary) →
+   [`agent/plugins.py`](src/retail_agent/agent/plugins.py) (policy choke point) →
+   [`agent/analysis.py`](src/retail_agent/agent/analysis.py) (governed SQL path) →
+   [`safety/sql_guard.py`](src/retail_agent/safety/sql_guard.py) (PII, k-anonymity, entitlements) →
+   [`reports/store.py`](src/retail_agent/reports/store.py) (two-phase deletion).
+4. Proof: [docs/EVALUATION.md](docs/EVALUATION.md) (offline and online results, ablation) and
+   `pytest`.
+
 ## What it does
 
 * **Natural-language analysis** over orders, order items, products and customers: customer behaviour,
@@ -55,7 +68,7 @@ Ollama or a deterministic model).
 ## Setup
 
 ### Prerequisites
-* Python **3.10 – 3.13** (tested with 3.12) and git.
+* Python **3.11 – 3.14** (clean installs tested on 3.11, 3.12 and 3.14) and git.
 * For online mode: a Google Cloud project with the BigQuery API enabled (the free tier is plenty; each
   query here scans about 3–10 MB) and the [gcloud CLI](https://cloud.google.com/sdk/docs/install); a
   free Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey).

@@ -25,7 +25,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from retail_agent.golden.retriever import tokenize
 from retail_agent.golden.store import Trio, TrioStore
@@ -122,7 +122,7 @@ class PromotionGate:
             if r.passed:
                 promoted = cand.model_copy(update={
                     "status": "active",
-                    "last_validated_at": datetime.now(timezone.utc).date().isoformat(),
+                    "last_validated_at": datetime.now(UTC).date().isoformat(),
                 })
                 self.store.write(promoted)
                 self.store.remove_candidate(cand.id)
@@ -138,7 +138,7 @@ class PromotionGate:
             if not (r.checks.get("safety") and r.checks.get("executes")):
                 self.store.write(t.model_copy(update={"status": "deprecated"}))
             else:
-                self.store.write(t.model_copy(update={"last_validated_at": datetime.now(timezone.utc).date().isoformat()}))
+                self.store.write(t.model_copy(update={"last_validated_at": datetime.now(UTC).date().isoformat()}))
             results.append(r)
         return results
 

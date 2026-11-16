@@ -1,0 +1,76 @@
+# CI = the release gate described in docs/EVALUATION.md.
+# Every push / PR: lint, offline tests on the supported Python versions, offline eval gate.
+# Manual (workflow_dispatch): the online eval gate against Gemini + BigQuery (needs repo secrets).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      online:
+        description: "Also run the online eval gate (Gemini + BigQuery)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: ruff check src tests evals scripts
+      - run: python scripts/build_offline_db.py
+      - run: pytest -q
+      - name: Offline eval gate
+        run: python evals/run_evals.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-offline-py${{ matrix.python }}
+          path: var/evals/
+
+  online:
+    # Costs money / free-tier quota and needs credentials: run on demand before a release, or on a
+    # schedule from a protected branch. Secrets: GOOGLE_API_KEY, GCP_PROJECT, GCP_SA_KEY (read-only
+    # BigQuery job user; Workload Identity Federation is preferable to a key in production).
+    if: github.event_name == 'workflow_dispatch' && inputs.online
+    needs: offline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - run: pip install -r requirements.txt
+      - name: Online smoke (schema drift, golden SQL on BigQuery, model chain)
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          RA_GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+        run: python scripts/smoke_online.py
+      - name: Online eval gate
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          RA_GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+        run: python evals/run_evals.py --provider gemini --warehouse bigquery --delay 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-online
+          path: var/evals/

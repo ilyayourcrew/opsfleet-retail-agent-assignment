@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -33,7 +33,7 @@ class Trio(BaseModel):
     status: Literal["active", "candidate", "deprecated"] = "active"
     quality_score: float = 1.0
     version: int = 1
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).date().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).date().isoformat())
     last_validated_at: str | None = None
     usage_count: int = 0
 

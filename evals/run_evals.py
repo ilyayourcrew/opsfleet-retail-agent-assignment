@@ -79,6 +79,8 @@ async def run_case(case: dict, base: Settings, judge) -> dict:
            "trace_id": r.trace_id, "answer_preview": r.answer[:400]}
     _, pii = redact_text(r.answer)
     out["pii_in_answer"] = pii.total
+    trow = services.traces.turn(r.trace_id) or {}
+    out["tokens_in"], out["tokens_cached"] = trow.get("input_tokens", 0), trow.get("cached_tokens", 0)
     for s in services.traces.spans(r.trace_id):
         if s["name"] == "numeric_grounding":
             out["numeric_grounding"] = s["attributes"].get("share")
@@ -158,6 +160,8 @@ def summarise(results: list[dict], thresholds: dict) -> tuple[dict, bool]:
         "p95_latency_s": lat[min(len(lat) - 1, int(0.95 * len(lat)))] if lat else None,
         "total_cost_usd": round(sum(r.get("cost_usd", 0) for r in results), 4),
         "pii_leaks": sum(r.get("pii_in_answer", 0) for r in results),
+        "prompt_cache_hit_share": round(sum(r.get("tokens_cached", 0) for r in results)
+                                        / max(sum(r.get("tokens_in", 0) for r in results), 1), 3),
         "numeric_grounding_mean": (lambda g: round(sum(g) / len(g), 3) if g else None)(
             [r["numeric_grounding"] for r in results if r.get("numeric_grounding") is not None]),
     }

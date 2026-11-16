@@ -1,0 +1,16 @@
+# Dependencies are pinned to the tested set (see requirements.txt). Upgrades arrive as PRs and merge
+# only when the CI gate (tests + offline evals) passes; ADK and sqlglot upgrades also need a manual
+# online eval run because the safety logic depends on their internals.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
