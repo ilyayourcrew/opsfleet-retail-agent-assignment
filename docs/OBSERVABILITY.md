@@ -15,8 +15,8 @@ sink in production).
 | `guard/input_guard` | verdict, category, reason, source (heuristic / llm) |
 | `event/implicit_preference_signal` | signals learned from the message |
 | `model/request` | model, messages in context, **delta**: the exact new messages (user text, function responses) sent on this call |
-| `model/response` | model version (shows fallback), tokens in/out, latency, finish reason, parts (text, function calls with args) |
-| `tool/run_analysis_sql` | attempt #, purpose, **original SQL**, **rewritten SQL**, error type + message, rows, bytes, warehouse ms, cache hit, PII masked |
+| `model/response` | model version (shows fallback), tokens in/out/**cached**, latency, finish reason, parts (text, function calls with args) |
+| `tool/run_analysis_sql` | attempt #, purpose, **original SQL**, **rewritten SQL**, error type + message, rows, bytes, warehouse ms, cache hit, PII masked, **BigQuery job id** (join to `INFORMATION_SCHEMA.JOBS` for slot time, bytes, cancellation) |
 | `tool/<other>` | args, status, result preview, latency |
 | `guard/*` | budget exceeded, attempts exhausted, output / tool-output PII redacted (with finding types) |
 | `error/*` | model or tool exception type and message |
@@ -59,6 +59,7 @@ same definitions as scheduled queries over the log sink, feeding Cloud Monitorin
 | Budget-exceeded turns | stopped by $ / call caps | cost runaways, loops | > 1% |
 | Cost per turn, total | LLM tokens × price + BigQuery bytes × price | budget ($1/question) | daily total > 2× forecast |
 | Tokens in/out | sums | prompt bloat | trend |
+| Prompt-cache hit share | cached input tokens / input tokens | cost and latency of the static instruction prefix | a drop after a prompt change means the prefix broke |
 | Numeric grounding | mean share of answer numbers traced to query results; turns below 0.8 | hallucinated figures in answers and reports | mean < 0.9 daily; low turns go to the review queue |
 | Feedback positive rate | 👍 / rated turns | perceived quality | < 70% weekly |
 | Golden trio hit rate | turns with ≥ 1 retrieved trio | knowledge coverage gaps | trend |

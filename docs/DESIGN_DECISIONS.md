@@ -5,8 +5,9 @@ This is the "why" companion to [TECHNICAL_DESIGN.md](TECHNICAL_DESIGN.md). It co
   alternatives, why this option won, what it costs, the evidence in this repository, and what would
   change the decision;
 - the questions a reviewer is likely to ask, with short answers;
-- what a tech-lead review of the first version found and fixed;
-- a prioritised roadmap.
+- what two tech-lead review passes found and fixed (19 findings, each with a regression test);
+- a prioritised roadmap;
+- how a team would build and run it, and a five-minute walkthrough for the review meeting.
 
 Rule of thumb when defending any choice: **name the constraint first, then the alternative you
 rejected, then the evidence.** "I chose X" is weak. "The client said PII must never reach the
@@ -174,9 +175,12 @@ that tries 20 ways to smuggle PII" is strong.
 ### D11. Persona as versioned data behind an automated quality gate
 * **Constraint.** A non-developer edits it weekly, there is no redeploy, and there is no manual
   approval.
-* **Why.** The persona holds tone and structure only. Safety rules are rendered *after* it in code,
-  so a persona cannot weaken them. The gate (schema, policy lint, behavioural sandbox run) replaces
-  the human approver. Versions are immutable, and rollback is instant.
+* **Why.** The persona holds tone and structure only. Safety rules are enforced in code, and the
+  prompt's safety section declares precedence. The gate (schema, policy lint, behavioural sandbox
+  run) replaces the human approver. Versions are immutable, and rollback is instant.
+* **Gate design rule.** The gate rejects *actions* ("delete reports", "show e-mails", "ignore the
+  rules"), not words. The weekly editor is a non-developer who cannot debug a regex; a gate that
+  rejects "call out any revenue drop" teaches them to stop using the system (finding F14).
 
 ### D12. Preferences: explicit wins; implicit preferences need 2 consistent signals
 * **Why.** One "too long" should not change someone's experience permanently, but two consistent
@@ -194,6 +198,69 @@ that tries 20 ways to smuggle PII" is strong.
 * **Alternative.** Cloud SQL Postgres, which has better full-text search for "reports mentioning
   Client X". Firestore needs a small search index for that. Both are defensible; I'd pick Postgres if
   report search becomes central.
+
+### D15. Prompt order is a cost lever, not a safety lever
+* **Constraint.** Latency and cost per question, plus a weekly persona change.
+* **Decision.** The instruction is ordered static-first:
+  1. role, schema, operating rules and safety rules (identical for everyone);
+  2. the persona (weekly);
+  3. user preferences, scope and date, retrieved trios, recent actions (per user and question).
+
+  Gemini's implicit prefix caching then serves the shared part at a fraction of the price and
+  latency. Cached tokens are traced, and a test pins the shared prefix.
+* **Alternative rejected.** Safety rules last ("recency wins"). That only matters if the prompt is
+  the safety mechanism. Here it is not: PII, k-anonymity, entitlements and deletion are enforced in
+  code, so moving the rules up costs nothing in safety. The safety section still states its own
+  precedence, and a closing one-line reminder keeps the recency benefit.
+
+### D16. Heuristic guards must be high-precision: a refused legitimate question is a failure
+* **Constraint.** The users are executives. "Why did revenue *drop*?" is the most natural question
+  they will ask.
+* **Decision.** The deterministic input tier blocks only unambiguous patterns: explicit SQL
+  statements, injection phrasing and named personal-data fields. Ambiguous intent goes to the
+  classifier. The dangerous outcomes are impossible structurally: the warehouse is read-only and the
+  guard rejects DML.
+* **Evidence.** Finding F10: the original keyword list refused "why did revenue drop", "alter our
+  discount strategy" and "truncate the list". There is now a false-refusal test list and the eval case
+  b5.
+* **How to say it.** "I measure guards on false refusals as well as on attacks. A guard that blocks
+  the CEO's first question is worse than no guard, because the safety comes from the data layer."
+
+### D17. The learning loop is a write path into other users' prompts, so it is gated like one
+* **Constraint.** Automated promotion (the client wants no human bottleneck), and promoted trios are
+  injected into every user's system prompt.
+* **Decision.**
+  * Every candidate's text must pass the same injection and PII checks as user input.
+  * Report excerpts are injected with their figures masked: stale, company-wide figures could be
+    outside the reader's entitlement and were being copied into answers.
+  * Mined trios carry `source: mined` and lower quality.
+  * Analysts get a weekly digest and can veto.
+* **Residual risk.** A subtle, rule-compliant but misleading trio (a wrong metric definition) passes
+  the content checks. Then the judge, the nightly re-validation and per-trio feedback are the defence.
+  Production adds a minimum of two distinct positive raters before a mined trio is promoted.
+
+### D18. Reproducibility: pin the tested set; support the Pythons a reviewer actually has
+* **Constraint.** "Runnable on another machine", and the reviewers will test it on theirs.
+* **Decision.**
+  * `requirements.txt` installs the tested set: exact versions for ADK and sqlglot, whose internals
+    the safety logic depends on; patch ranges for everything else.
+  * Python 3.11–3.14, with clean installs verified at both ends.
+  * CI runs the matrix and the eval gate; Dependabot proposes upgrades through it.
+* **Alternative rejected.** Lower bounds only (the first version). That allowed sqlglot 26 under a
+  guard written against sqlglot 30's AST, and it claimed Python 3.10 support that ADK does not have
+  (finding F16).
+
+### D19. Team process: change classes with matching gates
+* **Decision.** Changes are classed by their risk, each with a matching gate (`CONTRIBUTING.md`):
+  * **safety-critical** code needs an adversarial test that fails without the change, plus two
+    reviewers;
+  * **behavioural** changes (prompt, tools, models) need the online eval gate;
+  * **content** (personas, trios) goes through its own automated gates and needs no PR;
+  * **dependency** upgrades go through CI, plus the online gate for ADK and sqlglot.
+
+  Every production failure becomes a test or an eval case before its fix merges.
+* **Why.** It scales review effort with risk instead of reviewing everything equally, and it is
+  what lets non-developers change content daily without engineers in the loop.
 
 ---
 
@@ -285,10 +352,57 @@ outside it. It costs nothing.
 **Q14. What would you do differently with more time?**
 - Engine-level privacy in BigQuery (aggregation thresholds, then differential privacy).
 - A semantic layer for core metrics.
-- Prompt caching of the static instruction prefix.
 - Streaming answers and a web UI.
 - Claim-level grounding for qualitative statements.
 - Nightly repeated evals with confidence intervals.
+- A larger false-refusal eval set, sampled from real questions.
+
+**Q15. Your first version refused "why did revenue drop?". How did that happen, and how do you stop
+it happening again?**
+The keyword list was written from the attacker's side only, and the eval set had no false-refusal
+cases. The fix is in the process as well as the regex:
+- false refusals are a tested category (a list of legitimate questions that must pass, and eval case
+  b5);
+- heuristics are restricted to unambiguous patterns;
+- in production, the refusal rate on legitimate traffic is a monitored metric with an alert.
+
+**Q16. Can someone poison the learning loop?**
+Previously, yes: a user could rate their own crafted conversation, and the gate checked only SQL.
+Now candidate text must pass the injection and PII checks, and figures are masked in injected
+excerpts. Production adds a requirement of two distinct raters. The remaining risk is a plausible
+but wrong definition, which the judge, the nightly re-validation and per-trio feedback catch (D17).
+
+**Q17. Why exact pins? Doesn't that block security fixes?**
+Patch ranges allow fixes for most libraries. The exact pins are the two whose internals the safety
+code relies on. Dependabot proposes upgrades weekly, and CI plus the eval gate decide. An unpinned
+guard dependency is the bigger risk: the guard would silently run against a different AST.
+
+**Q18. Isn't this over-engineered for a 6–12 hour assignment?**
+The brief asks for a production-ready HLD and an elegant prototype of four requirements. The
+prototype stays small at the core:
+- one agent;
+- two plugins;
+- one governed SQL path;
+- one confirmation flow.
+
+Everything else is either required design shown working (learning loop, persona, evals) or a fix
+with a test. The reading guide in the README gives a 15-minute path through five files. If asked
+what I would cut: the Ollama provider and the chart tool first. Neither is required, but each
+demonstrates a requirement claim (offline operation, extensibility).
+
+**Q19. How would you staff and run this as a team?**
+See §6.
+
+**Q20. What is the biggest remaining risk?**
+Silent wrong answers: a fluent answer computed with a subtly wrong definition. The ablation showed
+exactly this when trios were removed. The mitigations are layered:
+- trios carry the definitions;
+- execution-accuracy evals check against analyst references;
+- the numeric grounding check catches invented figures;
+- the judge checks intent;
+- feedback routes misses to analysts.
+
+The structural fix is a semantic layer for the core metrics (roadmap P1).
 
 ---
 
@@ -308,6 +422,26 @@ fails without the fix.
 | F7 | **`search(k=0)` returned one trio.** The ablation would have silently kept a trio in the prompt. | Low (found by the new test) | Early return for k ≤ 0. | `test_no_golden_ablation_removes_trios` |
 | F8 | **No check that report numbers are real.** | Medium (R6) | Numeric grounding check on every turn, in metrics and in the eval summary. | `tests/test_grounding.py` |
 | F9 | **Classifier prompt concatenated raw user text.** | Low | User text is delimited, escaped and declared to be data. | existing classifier tests |
+
+### Second pass (the brief re-read line by line; every module and config reviewed)
+
+| # | Finding | Severity | Fix | Test |
+|---|---|---|---|---|
+| F10 | **False refusals of core questions.** "Why did revenue drop last month?", "Should we alter our discount strategy?", "Truncate the list to the top 5" were refused as data mutation (keyword `drop` / `alter` / `truncate`). "Customer names by region" was *allowed*. | **High (product)** | Mutation heuristic matches explicit SQL statement shapes only; "customer names" added to the PII patterns. | false-refusal list in `test_heuristic_guard_allows_legit_questions`, eval case b5 |
+| F11 | **BigQuery jobs kept running after a timeout.** The client stopped waiting at 45 s, but the job ran on and billed: cost inflation, which the brief rules out. | High (cost) | Server-side `job_timeout_ms` plus `job.cancel()` on any client-side failure; job id on the span. | `test_bigquery_job_is_cancelled_when_the_client_stops_waiting` |
+| F12 | **Cross-user prompt injection through the learning loop.** A user's own rated conversation could pass the gate (only the SQL was checked) and be injected into everyone's system prompt. | High (security) | `prompt_safe` gate check on all candidate text. | `test_poisoned_candidate_cannot_become_a_cross_user_prompt_injection` |
+| F13 | **Out-of-entitlement and stale figures in prompts.** Trio report excerpts with company-wide numbers reached restricted users' prompts and were copied into answers. | Medium | Figures masked in injected excerpts. | `test_report_excerpts_reach_the_prompt_without_stale_figures` |
+| F14 | **Persona lint rejected normal tone rules.** "Always call out any revenue drop" and "start with an update on KPIs" failed the gate. | Medium (R8 usability) | Lint targets actions on data or reports. | `test_persona_lint_blocks_rule_changes_but_not_everyday_tone_words` |
+| F15 | **CLI confirmation altered or crashed by titles.** Rich parsed model-written titles as markup: "Q1 [draft] review" was shown as "Q1  review" (not the exact list), and "[/bold]" crashed the CLI mid-confirmation. | **High (R3, R5)** | All untrusted text escaped; a second error boundary around rendering; Ctrl+C at the prompt cancels the pending deletion. | `tests/test_cli.py` |
+| F16 | **Not runnable as documented.** The README said Python 3.10 works, but ADK 2.14 requires 3.11+. Dependency floors (sqlglot>=26) allowed versions the guard was never tested on. 3.14 was excluded without reason. | High (deliverable 5) | Tested set pinned; Python 3.11–3.14; clean-clone installs verified on 3.11 and 3.14. | CI matrix |
+| F17 | **Public pseudonymisation key.** The default HMAC key "change-me" ships in the repo, and ids are small integers, so every `C-…` pseudonym was reversible. | Medium (privacy claim) | Random per-installation key in the state dir. | covered by existing pseudonymiser tests and config |
+| F18 | **No CI** although the design names a CI gate. | Medium (team) | GitHub Actions (3.11/3.12/3.14, lint, tests, offline eval; manual online eval), Dependabot, CONTRIBUTING, PR template. | the workflow itself |
+| F19 | **Prompt order defeated caching.** Per-user text came first, so no two requests shared a prefix. | Low (cost, latency) | Static-first order; cached tokens traced; prefix pinned by a test. | `test_system_prompt_has_a_long_shared_prefix_for_prompt_caching` |
+
+**What the pattern says (useful in the interview).** The first pass found attack-side holes. The
+second pass found mostly *failure-to-serve* and *operational* holes: false refusals, cost leaks,
+install failures, a crash in the confirmation step. Those are what a client experiences first.
+Hence D16 and D19.
 
 ---
 
@@ -336,7 +470,9 @@ fails without the fix.
 | P0 | Shared breaker state and result cache (Memorystore); per-user rate limits | Multi-instance correctness, latency tail, abuse | days |
 | P0 | Retention: spans 30 days, sessions 30 days, backups with expiry | Makes "hard delete" true end to end | hours |
 | P1 | Nightly online evals ×N with confidence intervals; thresholds re-set from data | Trustworthy release gate | days |
-| P1 | Prompt caching of the static instruction prefix; ADK event compaction for long sessions | Latency and cost; long conversations | days |
+| P1 | Explicit context caching for the static prefix (beyond implicit caching); ADK event compaction for long sessions | Latency and cost; long conversations | days |
+| P1 | Two distinct positive raters before a mined trio is promoted; trio usage and feedback weights in retrieval | Learning-loop robustness | days |
+| P1 | False-refusal monitoring (refusals on questions later answered after rephrasing) | Catch over-blocking in production | days |
 | P1 | Route report intents to a Pro model; stream answers | Report quality; perceived latency | days |
 | P1 | Semantic layer for core metrics (net revenue, churn, AOV) | Consistent definitions, fewer SQL errors | weeks |
 | P2 | Differential privacy for demographic queries | Formal defence against differencing | weeks |
@@ -346,7 +482,34 @@ fails without the fix.
 
 ---
 
-## 6. A five-minute walkthrough for the review meeting
+## 6. Team-lead view: how to build and run this with a team
+
+**Workstreams and owners** (a team of 4 plus an analytics partner):
+
+| Workstream | Owns | Success metric |
+|---|---|---|
+| Agent core and evals (tech lead) | engine, plugins, prompt, eval gate, release decisions | eval gate, judge score, p95 latency |
+| Data safety | SQL guard, policy, entitlements, PII scanning, BigQuery views and row policies | 0 PII leaks, red-team pass 100%, false-refusal rate |
+| Platform | Cloud Run, IAP, CI/CD, observability, cost | availability, cost per question, alert noise |
+| Knowledge and UX | golden bucket pipeline, persona tooling, admin page, UX research | ablation gap, trio coverage, feedback positive rate |
+| Analytics partner (client side) | trio curation, veto, metric definitions | trios promoted per week, vetoes |
+
+**Rituals.**
+- Weekly: review eval results, the top failed and negatively rated traces, and changes in refusal
+  rates; each recurring failure gets an owner.
+- Monthly: a red-team session, with new attack and false-refusal cases added to the eval set.
+- Every prompt, model or persona change: the online gate.
+
+**Onboarding.** The README reading guide (15 minutes), `CONTRIBUTING.md` (what needs which gate), and
+`pytest` plus the offline eval as the first task, with no cloud access needed.
+
+**What I would delegate first, and what I would keep.** Delegate the platform work and the persona
+admin UI (well specified). Keep the safety-critical review and the eval gate definition, because
+that is where judgement mistakes are expensive.
+
+---
+
+## 7. A five-minute walkthrough for the review meeting
 
 1. **Problem and constraints** (30 s). Executives, natural language, PII never reaches the LLM,
    k = 5, hard delete, $1/question, 10–30 s.
@@ -361,4 +524,7 @@ fails without the fix.
    the full correspondence.
 6. **Quality** (45 s). Eval gate numbers, the held-out and ablation numbers, the grounding check, and
    the known limits with their mitigations.
-7. **Roadmap** (15 s). The P0 list above.
+7. **How it was reviewed** (30 s). Two review passes, 19 findings, each with a test that fails
+   without the fix. The second pass found mostly failure-to-serve issues (F10, F15), and that changed
+   the process (D16, D19).
+8. **Roadmap** (15 s). The P0 list above.

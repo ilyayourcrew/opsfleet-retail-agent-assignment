@@ -92,10 +92,16 @@ network or credentials.
 3. **Input guard** (`GuardrailsPlugin.before_run_callback`). Heuristics, then the Flash-Lite scope
    classifier. A blocked message ends the turn immediately with a polite refusal, with no model call or
    SQL. Implicit preference signals ("too long", "as a table") are recorded here.
-4. **Instruction build** (`instructions.py`, once per invocation). Persona (active version), the user's
-   active preferences, entitlement scope, compact schema with aggregate-only markers, the **top-k golden
-   trios retrieved for this message**, recent confirmed actions (e.g. deletions), operating rules, and
-   finally the non-negotiable safety rules.
+4. **Instruction build** (`instructions.py`, once per invocation), ordered **static first** so Gemini's
+   implicit prefix cache can serve the shared part:
+   * role, compact schema with aggregate-only markers, operating rules and the non-negotiable safety
+     rules (identical for every user and question);
+   * then the active persona (changes weekly);
+   * then the per-user and per-question parts: preferences, entitlement scope and date, the **top-k
+     golden trios retrieved for this message** (report figures masked), and recent confirmed actions
+     (e.g. deletions).
+
+   Cached tokens are recorded on every model span.
 5. **Model ↔ tools loop** (ADK). Gemini plans and calls `run_analysis_sql` one or more times (multi-step
    questions), possibly `create_chart`, `save_report`, etc. Every model call passes the budget check
    (`before_model_callback`) and is traced (message delta in, parts out, tokens, latency, model version).
@@ -153,8 +159,10 @@ quality_score: 0.9   version: 1   created_at / last_validated_at
    lexical or semantic relevance is required, so unrelated questions get **no** examples rather than
    misleading ones (tested).
 3. The top 3 trios are injected into the system instruction as "how our analysts approached similar
-   questions": interpretation notes, SQL and report excerpt, with an explicit instruction to *adapt*,
-   not copy. This costs no extra model round-trip. For later sub-questions in a multi-step analysis
+   questions": interpretation notes, SQL and a report excerpt **with figures masked** ("~N% less"),
+   with an explicit instruction to *adapt*, not copy. Historical figures are stale and company-wide,
+   possibly outside the reader's product entitlement, and they were seen being copied into new
+   answers. The excerpt is there to teach reasoning and recommendations, not numbers. This costs no extra model round-trip. For later sub-questions in a multi-step analysis
    the model can call `search_golden_knowledge`.
 4. The retrieved trio ids are logged on the trace, so we can measure which trios get used and whether
    answers that used them are rated better.
@@ -167,10 +175,19 @@ YTD"), not only SQL syntax.
 * *Sources:* (a) analysts drop new trios into `candidates/` (GCS prefix), (b) **mining**: turns with
   positive feedback and successful SQL become candidate trios (question + final working SQL + accepted
   answer), `retail-agent learn`.
-* *Automated gate* for every candidate: schema check → SQL passes the guard (safe, read-only,
-  PII-free) → executes and returns rows → not a duplicate (same SQL or near-identical question) →
-  LLM judge (Flash-Lite) scores "does this SQL answer this question?" ≥ 0.7. Pass means promoted to
-  `active`; fail means it stays a candidate with reasons.
+* *Automated gate* for every candidate:
+  1. schema check;
+  2. the SQL passes the guard (safe, read-only, PII-free);
+  3. it executes and returns rows;
+  4. it is not a duplicate (same SQL or near-identical question);
+  5. it is **prompt-safe**: the question, interpretation and report text pass the same injection and
+     PII heuristics as user input;
+  6. an LLM judge (Flash-Lite) scores "does this SQL answer this question?" ≥ 0.7.
+
+  Pass means promoted to `active`; fail means it stays a candidate with reasons. The prompt-safety
+  check matters because an automated learning loop is a write path into *other users'* system
+  prompts. Without it, a user could rate their own crafted conversation and plant instructions for
+  everyone.
 * *Continuous re-validation* (nightly job, `learn --revalidate`): every active trio is re-run; trios
   broken by schema drift are automatically `deprecated`.
 * *Humans review exceptions only:* the analytics team gets a weekly digest of rejected candidates and
@@ -186,8 +203,8 @@ Defence in depth: each layer assumes the previous one failed.
 | Layer | What it does | Code |
 |---|---|---|
 | 1. Identity and entitlements | User comes from IAP/`ToolContext`, never from the model. Unknown users have no data access (fail closed). | `safety/policy.py`, `config/entitlements.yaml` |
-| 2. Input guard | Heuristics (prompt injection, data-mutation intent, requests for personal data) fail **closed**; Flash-Lite scope classifier (off-topic / malicious) fails **open** if unavailable, because data-layer controls still apply. Blocked turns never reach the model. | `safety/input_guard.py` |
-| 3. Instructions | Scope and privacy rules rendered *after* persona/preferences so they cannot be overridden by edits. | `agent/instructions.py` |
+| 2. Input guard | Heuristics (prompt injection, explicit SQL statements, requests for personal data) fail **closed** and are deliberately **high-precision**: refusing a legitimate question ("why did revenue *drop*?") is a product failure, and data cannot be modified anyway; Flash-Lite scope classifier (off-topic / malicious) fails **open** if unavailable, because data-layer controls still apply. Blocked turns never reach the model. | `safety/input_guard.py` |
+| 3. Instructions | Scope and privacy rules declare precedence over persona and preferences, and the persona gate rejects persona text that tries to change rules. Prompt position is not relied on for safety (layers 4–8 are code), so the prompt is ordered for caching. | `agent/instructions.py` |
 | 4. **SQL guard (structural)** | Single read-only `SELECT`; DML/DDL/scripting nodes denied anywhere; allowlist of the four tables (no `INFORMATION_SCHEMA`, wildcards, other datasets, table functions, exfiltration functions); CTEs may not shadow table names. **Every table is rewritten into a policy sub-query that physically lacks PII columns** and carries the user's entitlement filter; the query is then qualified against that PII-free schema, so `SELECT *`, `u.*`, `TO_JSON_STRING(u)` cannot reach PII. Whole-row struct references are rejected. | `safety/sql_guard.py` |
 | 5. Quasi-identifiers and k-anonymity | Column lineage over sqlglot scopes tracks which outputs carry raw demographics and customer ids. Raw demographics may not appear in final rows; any aggregation that *touches* demographics (keys, values or filters, directly or via a sub-query/CTE) gets `HAVING COUNT(DISTINCT customer_id) >= k` injected (k = 5, `RA_K_ANONYMITY_MIN` / `policy.yaml`). Row-level results filtered by demographics are rejected. Two classic bypasses are closed explicitly: **list-building aggregates** (`ARRAY_AGG(STRUCT(id, city, age))`, `STRING_AGG`, `APPROX_TOP_COUNT`, `APPROX_QUANTILES`) may not carry customer ids or demographics, because they enumerate each member of a "k-anonymous" group; and **singling out**: in a query that uses demographics, customer ids may not be compared with literals (`MAX(CASE WHEN id = 123 THEN age END)` passes k but reveals one person). | `safety/sql_guard.py` |
 | 6. Value-level scanning | Result sets are scanned by **content shape**, not column name: e-mails, phones, street addresses, coordinate pairs, IPs, Luhn-valid card numbers, columns whose values mostly look like postal codes or raw coordinates. Matches are masked before the model sees them. | `safety/pii.py` |
@@ -299,7 +316,7 @@ other user, other conversation untouched, stale snapshot, expiry).
 | Dependency | Strategy |
 |---|---|
 | Gemini (429/5xx/timeouts) | ADK `FallbackModel` over a chain of different models. Each non-final model sits behind a `BreakerLlm`: a **per-attempt deadline** (20 s; a hanging model triggers fallback, which status-code-based fallback alone would not) and a **process-wide circuit breaker** per model that trips immediately on quota (429) or deadline errors and after 2 consecutive 5xx, so later turns skip a sick model with zero latency and probe it again after 60 s. Non-final models retry 5xx once and never retry 429; the final model has the full retry policy. In production the breaker state would be shared across instances (Memorystore) or fed by a health checker. If **all** models fail: `on_model_error_callback` returns a graceful message plus, when a golden trio matches strongly, a **degraded answer**: the trio's SQL run through the full guard and rendered as a table. The user still gets data. |
-| BigQuery | Typed error classification (syntax / cost / timeout / transient / auth); transient errors retried with jittered backoff; **circuit breaker** fails fast while BigQuery is down and half-opens to probe recovery. |
+| BigQuery | Typed error classification (syntax / cost / timeout / transient / auth); transient errors retried with jittered backoff; **circuit breaker** fails fast while BigQuery is down and half-opens to probe recovery. Every job has a **server-side `job_timeout_ms`** and is **cancelled** when the client stops waiting, because a client timeout alone leaves the job running and billing. The job id is recorded on the trace span. |
 | Classifier / embeddings | Optional enhancers with their own breakers: the classifier fails open (heuristics stay), embeddings fall back to BM25. |
 | Any tool exception | `on_tool_error_callback` converts it into a structured error the model can reason about. |
 | Anything else | `ChatEngine.ask` is the error boundary: timeouts and unexpected exceptions become a friendly message with a trace reference; the CLI never crashes and the session is intact. |
@@ -346,7 +363,11 @@ Summary here; metric definitions, alerts and debugging workflow in [OBSERVABILIT
 ### 4.8 Agility: persona management (R8)
 
 * The persona holds **tone, style rules and report structure only** (`config/personas/*.yaml`).
-  Safety rules live in code and are rendered after the persona, so a persona cannot weaken them.
+  A persona cannot weaken the safety rules: they are enforced in code, the prompt's safety section
+  declares precedence over the persona, and the gate rejects persona text that tries to change rules.
+  The lint targets *actions* ("delete reports", "show e-mails"), not single words. "Call out any
+  revenue drop" is a normal tone rule and passes, because a non-developer cannot debug a false
+  rejection.
 * The editor changes a YAML file (production: a small admin form or a Google Sheet) and runs
   `retail-agent persona publish <file>`. The **automated quality gate** runs: schema limits, policy lint
   (rejects attempts to override rules, request personal data, mention data changes, links), then a
@@ -395,7 +416,13 @@ tools' context) are designed but not built.
 * **Trust boundaries:** user text, model output, tool results and data values are untrusted. Identity,
   entitlements, deletion confirmation and policy are trusted code paths the model cannot influence.
 * **Secrets:** API keys and the pseudonymisation HMAC key come from env / Secret Manager, never from the
-  repo (`.env` is git-ignored).
+  repo (`.env` is git-ignored). With no key configured, a random key is generated once per
+  installation (`var/pseudonym.key`). A default key in a public repo would make every pseudonym
+  reversible, because customer ids are small integers that can all be hashed.
+* **Terminal output is untrusted text:** report titles, SQL and user input are escaped before the CLI
+  renders them, so model-written text cannot alter what the confirmation step shows or crash it.
+* **Supply chain:** the tested dependency set is pinned, exactly for ADK and sqlglot because the safety
+  logic relies on their internals. Upgrades go through Dependabot PRs and the eval gate.
 * **Audit:** report saves, deletion requests, confirmations, cancellations and denials are logged with
   user and session; persona publications are versioned with author.
 
@@ -413,12 +440,18 @@ tools' context) are designed but not built.
   The $1/question budget (`RA_BUDGET_USD_PER_QUESTION`) is therefore a safety net enforced per turn.
 * **Latency budget:** simple question = input guard (≤ 1 s) + 2–3 model calls (2–5 s each) + 1–2
   queries (1–3 s) ≈ **8–20 s**; reports ≈ 4–6 queries + longer generation ≈ **40–90 s**. The turn timeout
-  (150 s) and call budgets bound the worst case. Prompt caching of the static instruction prefix is the
-  next lever.
+  (150 s) and call budgets bound the worst case. The instruction is ordered static-first for Gemini's
+  implicit prefix caching (cached input tokens are billed at a fraction and processed faster). The
+  share of cached input tokens is reported by `stats` and the eval summary.
 
 ## 8. Deployment and operations
 
-* **Build:** Cloud Build on every PR runs ruff + `pytest` (offline, about 15 s) + offline evals; merges to
+* **Build:** in this repository, GitHub Actions (`.github/workflows/ci.yml`) runs:
+  * on every push and PR: ruff, `pytest` on Python 3.11/3.12/3.14, and the offline eval gate;
+  * on demand: the online eval gate.
+
+  Dependabot proposes dependency upgrades through the same gate. In GCP production the same steps
+  run in Cloud Build on every PR; merges to
   `main` build a container (Artifact Registry) and deploy `agent-api` to a staging Cloud Run service,
   then run the online eval suite against staging; promotion to prod requires the gate to pass.
   Terraform manages Cloud Run, IAP, service accounts, BigQuery authorized views, row-access policies,
