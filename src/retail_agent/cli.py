@@ -414,7 +414,7 @@ def doctor(provider: str = typer.Option(None), warehouse: str = typer.Option(Non
     """Check configuration, credentials and connectivity."""
     _quiet_logs()
     s = _settings(provider, warehouse)
-    console.print(f"provider={s.llm_provider} model={s.model_primary} fallback={s.model_fallback} warehouse={s.warehouse}")
+    console.print(f"provider={s.llm_provider} model={s.model_primary} fallback_chain={s.fallback_models} light={s.model_light} warehouse={s.warehouse}")
     if s.warehouse == "duckdb":
         console.print(("[green]OK[/green] " if s.duckdb_path.exists() else "[red]MISSING[/red] ") + f"offline DB {s.duckdb_path}")
     else:
@@ -438,7 +438,7 @@ def doctor(provider: str = typer.Option(None), warehouse: str = typer.Option(Non
 
                 _export_key(s)
                 c = genai.Client()
-                for m in (s.model_primary, s.model_fallback):
+                for m in dict.fromkeys([s.model_primary, *s.fallback_models, s.model_light]):
                     t0 = time.time()
                     r = c.models.generate_content(model=m, contents="Reply with the single word: ok")
                     console.print(f"[green]OK[/green] {m}: {r.text.strip()[:20]!r} ({time.time() - t0:.1f}s)")

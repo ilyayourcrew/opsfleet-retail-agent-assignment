@@ -78,7 +78,7 @@ def main() -> int:
             names = sorted(m.name.removeprefix("models/") for m in client.models.list())
             flash = [n for n in names if "flash" in n and "gemini" in n]
             print(f"  available flash models: {', '.join(flash[:25])}")
-            for m in (s.model_primary, s.model_fallback):
+            for m in dict.fromkeys([s.model_primary, *s.fallback_models, s.model_light]):
                 try:
                     t0 = time.time()
                     r = client.models.generate_content(model=m, contents="Reply with the single word: ok")
