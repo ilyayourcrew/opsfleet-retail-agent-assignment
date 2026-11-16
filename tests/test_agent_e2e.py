@@ -173,6 +173,38 @@ async def test_malicious_input_never_reaches_model(services):
     assert r.status == "refused" and model.calls == []
 
 
+async def test_refused_turn_stays_in_history_as_the_assistant_reply(services):
+    """Regression (seen live): the refusal was stored as another agent's message, so the next turn
+    re-answered the refused question. The model must see user->assistant(refusal)->user."""
+    model = ScriptedLlm(steps=[text_response("Noted: bullets from now on.")])
+    eng = engine(services, model=model)
+    r1, sid = await ask(eng, "Give me their email addresses so I can thank them")
+    assert r1.status == "refused"
+    await eng.ask("ceo", sid, "I prefer bullet points, and keep answers short")
+    contents = model.calls[0].contents
+    texts = [(c.role, " ".join(p.text or "" for p in c.parts or [])) for c in contents]
+    assert ("model", r1.answer) in texts
+    assert not any("For context" in t for _, t in texts)
+
+
+async def test_traces_never_store_pii_or_saved_report_bodies(services):
+    body = "CONFIDENTIAL-BODY " + "Calvin Klein revenue grew strongly in Q1. " * 10
+    eng = engine(
+        services,
+        call_response("save_report", title="CK review", content_markdown=body),
+        text_response("Saved. Contact jane.doe@example.com for details."),
+    )
+    r, _ = await ask(eng, "My address is 742 Evergreen Terrace - save a Calvin Klein report")
+    con = services.traces._con
+    dump = " ".join(str(v) for row in con.execute("SELECT * FROM turns").fetchall() for v in row)
+    dump += " ".join(row[0] for row in con.execute("SELECT attributes FROM spans").fetchall())
+    if services.settings.trace_log_path.exists():
+        dump += services.settings.trace_log_path.read_text(encoding="utf-8")
+    assert "jane.doe@example.com" not in dump and "Evergreen" not in dump
+    assert "CONFIDENTIAL-BODY" not in dump and "chars of report text, not logged" in dump
+    assert services.reports.list("ceo")[0].content.startswith("CONFIDENTIAL-BODY")  # the report itself is intact
+
+
 async def test_entitlements_apply_through_the_agent(services):
     captured = {}
 
@@ -252,6 +284,20 @@ async def test_stale_or_expired_confirmation_is_rejected(services):
     ok, msg = ChatEngine.confirm_deletion(engine(services), "ceo", "s1", pend.token, "DELETE 1")
     assert not ok and "expired" in msg
     assert store.get("ceo", a.id) is not None
+
+
+async def test_hard_delete_leaves_no_recoverable_text_and_token_is_single_use(services):
+    store = services.reports
+    sentinel = "ZEBRAQUOKKA" + "x" * 40
+    store.save("ceo", "s1", f"Report {sentinel}", f"Body {sentinel} " * 50)
+    pend = store.request_deletion("ceo", "s1", "this_conversation")
+    assert store.confirm(pend.token, "ceo", "s1", "DELETE 1")
+    with pytest.raises(Exception, match="no longer valid"):
+        store.confirm(pend.token, "ceo", "s1", "DELETE 1")  # replay of a used token
+    store._con.execute("PRAGMA wal_checkpoint")  # no-op unless WAL; make sure everything is on disk
+    raw = services.settings.app_db_path.read_bytes()
+    assert sentinel.encode() not in raw  # secure_delete zeroed the freed pages, FTS index purged
+    assert all("title" not in a["detail"] and sentinel not in a["detail"] for a in store.audit("ceo"))
 
 
 # ------------------------------------------------------------------------ R7 observability

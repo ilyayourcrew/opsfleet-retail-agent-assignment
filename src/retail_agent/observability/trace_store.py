@@ -4,6 +4,10 @@ Every user turn gets a trace_id (= ADK invocation id). Spans record each model c
 delta sent, the response parts, tokens, latency), each tool call (args such as the SQL, result
 status, rows, errors), guard decisions and errors. A turn row aggregates the counters used for
 metrics. Storage: SQLite (prototype) + JSON lines (ship to Cloud Logging / BigQuery in prod).
+
+Logs are a data sink too: everything is passed through the PII redactor at write time (user
+questions, model text, tool arguments and previews), and saved-report bodies are never logged
+(only their length), so a hard-deleted report does not survive in the traces.
 """
 
 from __future__ import annotations
@@ -16,6 +20,23 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from retail_agent.safety.pii import ScanReport, redact_text
+
+_BODY_KEYS = {"content_markdown", "content", "content_preview"}
+
+
+def scrub(value: Any, report: ScanReport | None = None, _key: str = "") -> Any:
+    """Recursively redact PII-looking strings and elide report bodies before persisting."""
+    if isinstance(value, str):
+        if _key in _BODY_KEYS and len(value) > 120:
+            return f"<{len(value)} chars of report text, not logged>"
+        return redact_text(value, report)[0]
+    if isinstance(value, dict):
+        return {k: scrub(v, report, str(k)) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [scrub(v, report, _key) for v in value]
+    return value
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS turns (
@@ -131,14 +152,14 @@ class TraceStore:
         row = {
             "trace_id": t.trace_id, "session_id": t.session_id, "user_id": t.user_id,
             "started_at": t.started_at, "ended_at": ended, "latency_ms": (ended - t.started_at) * 1000,
-            "question": t.question, "answer_preview": (t.answer or "")[:500], "status": t.status,
+            "question": scrub(t.question), "answer_preview": scrub((t.answer or "")[:500]), "status": t.status,
             "refusal_category": t.refusal_category, "model_calls": t.model_calls, "tool_calls": t.tool_calls,
             "sql_attempts": t.sql_attempts, "sql_failures": t.sql_failures, "sql_empty": t.sql_empty,
             "sql_self_corrected": t.sql_self_corrected, "guard_blocks": t.guard_blocks,
             "pii_redactions": t.pii_redactions, "input_tokens": t.input_tokens, "output_tokens": t.output_tokens,
             "llm_cost_usd": round(t.llm_cost_usd, 6), "bq_bytes": t.bq_bytes, "bq_cost_usd": round(t.bq_cost_usd, 6),
             "fallback_used": int(t.fallback_used), "degraded": int(t.degraded),
-            "budget_exceeded": int(t.budget_exceeded), "error": t.error[:1000], "persona": t.persona,
+            "budget_exceeded": int(t.budget_exceeded), "error": scrub(t.error[:1000]), "persona": t.persona,
             "golden_ids": json.dumps(t.golden_ids), "provider": t.provider,
         }
         cols = ", ".join(row)
@@ -149,10 +170,10 @@ class TraceStore:
                 self._con.execute(
                     "INSERT OR REPLACE INTO spans VALUES (?,?,?,?,?,?,?,?,?)",
                     (s.span_id, t.trace_id, i, s.kind, s.name, s.started_at, s.duration_ms, s.status,
-                     json.dumps(s.attributes, default=str)),
+                     json.dumps(scrub(json.loads(json.dumps(s.attributes, default=str))))),
                 )
         if self.jsonl_path:
-            rec = {**row, "spans": [asdict(s) for s in t.spans]}
+            rec = {**row, "spans": [scrub(json.loads(json.dumps(asdict(s), default=str))) for s in t.spans]}
             with self._lock, open(self.jsonl_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, default=str) + "\n")
 

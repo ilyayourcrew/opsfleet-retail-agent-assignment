@@ -13,10 +13,16 @@ Deletion is never executed by the LLM. The agent can only *request* a deletion:
            * the reports still exist, are still owned by the user and have not changed
              (snapshot hash) - otherwise the user must re-request
            -> hard delete (no recovery, per client requirement) + audit record.
+
+"Hard delete" is meant literally: SQLite runs with secure_delete (freed pages are zeroed, so the text
+is not recoverable from the file) and the FTS index uses secure-delete too; the audit log keeps ids
+and counts, never titles or content. The single-use check is an atomic compare-and-set, so two
+concurrent confirmations cannot both execute.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import secrets
@@ -106,7 +112,12 @@ class ReportStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._con = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
         self._con.row_factory = sqlite3.Row
+        self._con.execute("PRAGMA secure_delete = ON")
         self._con.executescript(SCHEMA)
+        # FTS5 secure-delete (SQLite >= 3.44): deleted tokens are removed from the index, not just
+        # tombstoned. Older SQLite: run the FTS 'optimize' command periodically instead.
+        with contextlib.suppress(sqlite3.OperationalError):
+            self._con.execute("INSERT INTO reports_fts(reports_fts, rank) VALUES ('secure-delete', 1)")
         self._lock = threading.Lock()
         self.ttl_s = ttl_s
 
@@ -119,7 +130,7 @@ class ReportStore:
                 (owner_id, session_id, title.strip()[:200], content, json.dumps(sql_used or []), ts, ts),
             )
             rid = cur.lastrowid
-        self._audit(owner_id, session_id, "save_report", {"id": rid, "title": title})
+        self._audit(owner_id, session_id, "save_report", {"id": rid})
         return Report(rid, owner_id, session_id, title, content, ts)  # type: ignore[arg-type]
 
     def _rows(self, sql: str, args: tuple) -> list[Report]:
@@ -185,7 +196,7 @@ class ReportStore:
                 (token, owner_id, session_id, "delete_reports", json.dumps([r.id for r in reports]),
                  _snapshot(reports), desc, time.time(), expires, "pending"),
             )
-        self._audit(owner_id, session_id, "delete_requested", {"ids": [r.id for r in reports], "desc": desc})
+        self._audit(owner_id, session_id, "delete_requested", {"ids": [r.id for r in reports], "scope": scope})
         return PendingDeletion(token, owner_id, session_id, reports, desc, expires)
 
     def pending(self, owner_id: str, session_id: str) -> PendingDeletion | None:
@@ -227,12 +238,20 @@ class ReportStore:
             self._set_status(token, "stale")
             raise DeletionError("The reports changed since you asked. Please review the list again.")
         with self._lock:
-            self._con.execute("BEGIN")
+            self._con.execute("BEGIN IMMEDIATE")
             try:
+                # compare-and-set: only the first confirmation of a pending token may proceed
+                claimed = self._con.execute(
+                    "UPDATE pending_actions SET status = 'done' WHERE token = ? AND status = 'pending'", (token,)
+                ).rowcount
+                if claimed != 1:
+                    self._con.execute("ROLLBACK")
+                    raise DeletionError("This confirmation is no longer valid. Please ask again.")
                 for i in ids:
                     self._con.execute("DELETE FROM reports WHERE id = ? AND owner_id = ?", (i, owner_id))
-                self._con.execute("UPDATE pending_actions SET status = 'done' WHERE token = ?", (token,))
                 self._con.execute("COMMIT")
+            except DeletionError:
+                raise
             except Exception:
                 self._con.execute("ROLLBACK")
                 raise

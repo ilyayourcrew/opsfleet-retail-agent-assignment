@@ -3,6 +3,7 @@
     python evals/run_evals.py                                   # offline (fake model + DuckDB)
     python evals/run_evals.py --provider gemini --warehouse bigquery --only golden,judge
     python evals/run_evals.py --provider gemini --warehouse bigquery --delay 4   # free-tier friendly
+    python evals/run_evals.py --provider gemini --warehouse bigquery --only golden,heldout --no-golden  # ablation
 
 Each case runs in a fresh, isolated state directory through the real ChatEngine. Results are
 written to var/evals/<timestamp>.json and summarised; the exit code is non-zero when a threshold
@@ -40,11 +41,17 @@ facts), actionability (clear takeaways / next steps where relevant), clarity (ex
 Reply JSON: {{"intent": n, "grounding": n, "actionability": n, "clarity": n, "comment": "<short>"}}"""
 
 
+def _signal(v: float) -> bool:
+    """Small integers (ranks, months, weekdays, tiny counts) match by coincidence - ignore them."""
+    return not (float(v).is_integer() and -100 <= v <= 100)
+
+
 def numbers_in(df) -> set[float]:
     vals = set()
     for c in df.select_dtypes("number").columns:
         for v in df[c].dropna().tolist():
-            vals.add(round(float(v), 1))
+            if _signal(float(v)):
+                vals.add(round(float(v), 1))
     return vals
 
 
@@ -74,9 +81,12 @@ async def run_case(case: dict, base: Settings, judge) -> dict:
     out["pii_in_answer"] = pii.total
     kind = case["kind"]
 
-    if kind == "golden":
-        trio = next(t for t in services.trios.active() if t.id == case["reference"])
-        checked = services.guard().check(trio.sql, services.policies.entitlement("ceo"))
+    if kind == "heldout" and base.llm_provider == "fake":
+        out["passed"] = None
+        out["note"] = "held-out questions need a real model (no trio to follow offline)"
+    elif kind in ("golden", "heldout"):
+        ref_sql = case.get("reference_sql") or next(t for t in services.trios.active() if t.id == case["reference"]).sql
+        checked = services.guard().check(ref_sql, services.policies.entitlement("ceo"))
         ref = services.pseudonymizer.apply(services.warehouse.execute(checked.sql, 500).df, checked.pseudonymize_columns)
         ref_nums = numbers_in(ref)
         agent_nums: set[float] = set()
@@ -84,7 +94,9 @@ async def run_case(case: dict, base: Settings, judge) -> dict:
             agent_nums |= numbers_in(df)
         for m in re.findall(r"-?\d[\d,]*\.?\d*", r.answer):  # numbers quoted in the answer also count
             with contextlib.suppress(ValueError):
-                agent_nums.add(round(float(m.replace(",", "")), 1))
+                v = float(m.replace(",", ""))
+                if _signal(v):
+                    agent_nums.add(round(v, 1))
         score = len(ref_nums & agent_nums) / len(ref_nums) if ref_nums else 0.0
         out["execution_accuracy"] = round(score, 3)
         out["passed"] = score >= 0.5 and pii.total == 0
@@ -127,12 +139,14 @@ def summarise(results: list[dict], thresholds: dict) -> tuple[dict, bool]:
         rs = [r for r in results if r["kind"] == kind and r.get("passed") is not None]
         return (sum(1 for r in rs if r["passed"]) / len(rs)) if rs else None
 
-    golden = [r["execution_accuracy"] for r in results if "execution_accuracy" in r]
+    golden = [r["execution_accuracy"] for r in results if "execution_accuracy" in r and r["kind"] == "golden"]
+    heldout = [r["execution_accuracy"] for r in results if "execution_accuracy" in r and r["kind"] == "heldout"]
     judge = [r["judge_mean"] for r in results if "judge_mean" in r]
     lat = sorted(r["latency_s"] for r in results if "latency_s" in r)
     summary = {
         "cases": len(results),
         "golden_execution_accuracy": round(sum(golden) / len(golden), 3) if golden else None,
+        "heldout_execution_accuracy": round(sum(heldout) / len(heldout), 3) if heldout else None,
         "judge_mean_score": round(sum(judge) / len(judge), 2) if judge else None,
         "redteam_pass_rate": rate("redteam"),
         "behaviour_pass_rate": rate("behaviour"),
@@ -156,6 +170,7 @@ def main() -> None:
     ap.add_argument("--warehouse", default="duckdb")
     ap.add_argument("--only", default="", help="comma-separated kinds or case ids")
     ap.add_argument("--delay", type=float, default=0.0, help="seconds between cases (rate limits)")
+    ap.add_argument("--no-golden", action="store_true", help="ablation: no analyst trios in the prompt or tool")
     args = ap.parse_args()
 
     import logging
@@ -164,6 +179,8 @@ def main() -> None:
     warnings.filterwarnings("ignore")
     logging.disable(logging.WARNING)
     base = get_settings().model_copy(update={"llm_provider": args.provider, "warehouse": args.warehouse})
+    if args.no_golden:
+        base = base.model_copy(update={"golden_top_k": 0})
     spec = yaml.safe_load((ROOT / "evals" / "cases.yaml").read_text(encoding="utf-8"))
     sel = {x.strip() for x in args.only.split(",") if x.strip()}
     cases = [c for c in spec["cases"] if not sel or c["kind"] in sel or c["id"] in sel]
@@ -185,7 +202,8 @@ def main() -> None:
     summary, ok = summarise(results, spec["thresholds"])
     out_dir = get_settings().state_dir / "evals"
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"eval_{args.provider}_{args.warehouse}_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    tag = "_nogolden" if args.no_golden else ""
+    path = out_dir / f"eval_{args.provider}_{args.warehouse}{tag}_{time.strftime('%Y%m%d_%H%M%S')}.json"
     path.write_text(json.dumps({"summary": summary, "results": results, "args": vars(args)}, indent=2, default=str))
     print("\nSUMMARY", json.dumps(summary, indent=2))
     print(f"report: {path}")

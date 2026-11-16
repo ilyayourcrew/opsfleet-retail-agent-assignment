@@ -130,7 +130,7 @@ class GoldenRetriever:
 
     def search(self, question: str, k: int = 3) -> list[Hit]:
         trios = self.store.active()
-        if not trios or not question.strip():
+        if k <= 0 or not trios or not question.strip():
             return []
         self._ensure_index(trios)
         assert self._bm25 is not None

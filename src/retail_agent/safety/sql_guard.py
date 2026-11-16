@@ -15,7 +15,11 @@ Safety is enforced *structurally*, not by prompt:
    * any aggregation that touches quasi-identifiers (in keys, values or filters, directly or via a
      sub-query/CTE) gets `HAVING COUNT(DISTINCT <customer id>) >= k` injected - small groups are
      suppressed (k-anonymity, k=5 default);
-   * customer-id output columns are reported so results can be pseudonymised.
+   * customer-id output columns are reported so results can be pseudonymised;
+   * list-building aggregates (ARRAY_AGG, STRING_AGG, APPROX_TOP_*, APPROX_QUANTILES) may not carry
+     customer ids or quasi-identifiers - they would list each group member's value;
+   * in queries that use quasi-identifiers, customer ids may not be compared with literals
+     (singling out: MAX(CASE WHEN id = 123 THEN age END) passes k but reveals one person).
 6. Every base table is replaced by a policy sub-query: PII-free projection + the user's product
    entitlement filter (order_items/orders/users are restricted to entitled products too).
 7. A LIMIT is enforced on the final result.
@@ -51,6 +55,20 @@ _DENIED_NODES: tuple[type[exp.Expression], ...] = tuple(
     )
     if t is not None
 )
+
+# Aggregates that return *collections of input values* instead of a summary. Over a k-anonymous
+# group they would still list each member's value (ARRAY_AGG(STRUCT(id, city, age))), so customer
+# ids and demographic attributes may not appear inside them.
+_LISTING_AGGS: tuple[type[exp.Expression], ...] = tuple(
+    t
+    for t in (
+        getattr(exp, n, None)
+        for n in ("ArrayAgg", "GroupConcat", "ArrayConcatAgg", "ArrayUniqueAgg", "ApproxTopK", "ApproxTopSum",
+                  "ApproxQuantiles")
+    )
+    if t is not None
+)
+_COMPARISONS = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.In, exp.Between)
 
 
 class GuardViolation(Exception):
@@ -241,11 +259,29 @@ class SqlGuard:
             p = p.parent
         return False
 
+    @staticmethod
+    def _compared_to_literal(col: exp.Column) -> bool:
+        """True for `id = 123`, `id IN (1, 2)`, `id BETWEEN 1 AND 3`, `id > 10` (wrapping casts ignored)."""
+        node: exp.Expression = col
+        while isinstance(node.parent, (exp.Cast, exp.TryCast, exp.Paren)):
+            node = node.parent
+        cmp = node.parent
+        if not isinstance(cmp, _COMPARISONS):
+            return False
+        others = [v for k, v in cmp.args.items() if v is not None and v is not node and k != "query"]
+        flat: list[exp.Expression] = []
+        for o in others:
+            flat.extend(o if isinstance(o, list) else [o])
+        return any(isinstance(o, exp.Literal) or (isinstance(o, exp.Expression) and o.find(exp.Literal) and
+                                                  not o.find(exp.Column)) for o in flat)
+
     def _lineage_and_k(self, root: exp.Expression) -> tuple[int, set[str], list[str]]:
         infos: dict[int, _ScopeInfo] = {}
         k_scopes = 0
         notes: list[str] = []
         root_scope: Scope | None = None
+        any_quasi = False
+        singling_out: list[str] = []
         for scope in traverse_scope(root):
             info = _ScopeInfo()
             node = scope.expression
@@ -280,8 +316,18 @@ class SqlGuard:
 
             touches_quasi = False
             for col in scope.columns:
-                q, _ = self._column_class(col, scope, infos)
+                q, u = self._column_class(col, scope, infos)
                 touches_quasi |= q
+                if (q or u) and self._inside(col, _LISTING_AGGS, node):
+                    raise GuardViolation(
+                        "policy",
+                        f"Customer ids and demographic attributes cannot be listed inside ARRAY_AGG / STRING_AGG / "
+                        f"APPROX_TOP_* / APPROX_QUANTILES (column '{col.name}').",
+                        "Use counts or sums per group instead, e.g. COUNT(DISTINCT user_id), or GROUP BY the attribute.",
+                    )
+                if u and self._compared_to_literal(col):
+                    singling_out.append(col.name)
+            any_quasi |= touches_quasi
 
             is_agg = bool(node.args.get("group")) or any(
                 isinstance(a, exp.AggFunc) and not self._inside(a, (exp.Window,), node)
@@ -325,6 +371,15 @@ class SqlGuard:
                     info.raw_quasi.clear()
             infos[id(node)] = info
 
+        if any_quasi and singling_out:
+            # e.g. MAX(CASE WHEN u.id = 123 THEN u.age END) over a large group: the aggregate passes
+            # k-anonymity but reveals one person's attribute.
+            raise GuardViolation(
+                "policy",
+                "Queries that use demographic attributes cannot filter on specific customer ids "
+                f"({', '.join(sorted(set(singling_out)))}).",
+                "Analyse demographics for groups of customers, not for an individual customer.",
+            )
         if root_scope is not None:
             final = infos.get(id(root_scope.expression)) or _ScopeInfo()
             if final.raw_quasi:

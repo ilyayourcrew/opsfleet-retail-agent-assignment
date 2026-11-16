@@ -147,6 +147,40 @@ def test_aggregates_of_k_protected_ctes_are_allowed(guard, ceo, warehouse):
     assert len(warehouse.execute(r.sql, 50).df) > 0
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # list-building aggregates would enumerate each member of a k-anonymous group
+        "SELECT u.country, ARRAY_AGG(STRUCT(u.id, u.city, u.age)) AS people FROM users u GROUP BY u.country",
+        "SELECT u.country, STRING_AGG(CONCAT(CAST(u.id AS STRING), ':', u.city)) AS x FROM users u GROUP BY u.country",
+        "SELECT u.country, APPROX_TOP_COUNT(u.city, 100) AS x FROM users u GROUP BY u.country",
+        "SELECT p.brand, ARRAY_AGG(oi.user_id) AS buyers FROM order_items oi JOIN products p ON p.id = oi.product_id GROUP BY p.brand",
+        # singling out: aggregate over a large group that isolates one customer's attribute
+        "SELECT MAX(CASE WHEN u.id = 123 THEN u.age END) AS a FROM users u",
+        "SELECT u.state, SUM(IF(o.user_id = 123, 1, 0)) AS n FROM orders o JOIN users u ON u.id = o.user_id GROUP BY u.state",
+        "SELECT AVG(u.age) AS a FROM users u WHERE u.id IN (1, 2, 3)",
+        "SELECT AVG(u.age) AS a FROM users u WHERE CAST(u.id AS STRING) = '42'",
+    ],
+)
+def test_k_anonymity_bypasses_are_rejected(guard, ceo, sql):
+    with pytest.raises(GuardViolation) as e:
+        guard.check(sql, ceo)
+    assert e.value.kind == "policy" and e.value.hint
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT u.state, COUNT(DISTINCT CASE WHEN u.age > 50 THEN u.id END) AS seniors FROM users u GROUP BY u.state",
+        "SELECT p.brand, ARRAY_AGG(DISTINCT p.category) AS categories FROM products p GROUP BY p.brand",
+        "SELECT o.user_id, COUNT(*) AS orders FROM orders o WHERE o.user_id = 42 GROUP BY o.user_id",
+    ],
+)
+def test_legitimate_lookalikes_still_pass(guard, ceo, warehouse, sql):
+    r = guard.check(sql, ceo)
+    warehouse.execute(r.sql, 10)
+
+
 def test_limit_is_enforced(guard, ceo):
     r = guard.check("SELECT order_id FROM orders", ceo)
     assert r.sql.rstrip().endswith("LIMIT 201")

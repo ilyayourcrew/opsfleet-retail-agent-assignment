@@ -21,7 +21,7 @@ from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
 from retail_agent.agent.services import Services
-from retail_agent.observability.trace_store import TurnState
+from retail_agent.observability.trace_store import TurnState, scrub
 from retail_agent.safety.pii import ScanReport, redact_text
 
 
@@ -37,12 +37,13 @@ def _summarize_parts(content: types.Content | None, limit: int = 1200) -> list[d
         if p.text:
             out.append({"text": p.text[:limit]})
         elif p.function_call:
-            out.append({"function_call": p.function_call.name, "args": json.loads(json.dumps(p.function_call.args or {}, default=str))})
+            out.append({"function_call": p.function_call.name,
+                        "args": scrub(json.loads(json.dumps(p.function_call.args or {}, default=str)))})
         elif p.function_response:
             resp = p.function_response.response or {}
             out.append({"function_response": p.function_response.name,
                         "status": resp.get("status") if isinstance(resp, dict) else None,
-                        "preview": json.dumps(resp, default=str)[:limit]})
+                        "preview": json.dumps(scrub(json.loads(json.dumps(resp, default=str))))[:limit]})
     return out
 
 
@@ -127,7 +128,7 @@ class ObservabilityPlugin(BasePlugin):
             if tool.name != "run_analysis_sql":  # run_analysis_sql records its own detailed span
                 turn.span("tool", tool.name, status=str(status), duration_ms=dur,
                           args=json.loads(json.dumps(tool_args, default=str)),
-                          result_preview=json.dumps(result, default=str)[:800])
+                          result_preview=json.dumps(scrub(json.loads(json.dumps(result, default=str))))[:800])
             else:
                 for s in reversed(turn.spans):
                     if s.name == "run_analysis_sql":
@@ -189,6 +190,16 @@ class GuardrailsPlugin(BasePlugin):
         learned = self.s.prefs.learn_from_message(ic.user_id, text)
         if turn and learned:
             turn.span("event", "implicit_preference_signal", signals=learned)
+        return None
+
+    async def on_event_callback(self, *, invocation_context, event) -> Any:
+        """A refusal returned from before_run is appended by ADK with author 'model'. The agent would
+        later see it as *another* agent's reply and treat the refused question as still unanswered
+        (observed live: the next turn re-answered the refused request). Re-author it as the agent so the
+        history reads: user asked -> assistant refused."""
+        agent = getattr(invocation_context, "agent", None)
+        if event.author == "model" and agent is not None and event.content is not None:
+            return event.model_copy(update={"author": agent.name})
         return None
 
     # ---------------------------------------------------------------- budgets
