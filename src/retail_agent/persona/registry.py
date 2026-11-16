@@ -1,7 +1,9 @@
 """Persona management without redeployment (requirement 8).
 
 A persona controls *tone and presentation only* (tone, style rules, report structure). Safety and
-data rules live in code and are rendered after the persona, so a persona can never relax them.
+data rules are enforced in code (SQL guard, plugins, confirmation flow), the prompt's safety section
+declares precedence over the persona, and the gate below rejects personas that try to change rules,
+so a persona can never relax them.
 
 Workflow for the (non-developer) editor:
     1. edit / copy a YAML file under config/personas/
@@ -53,7 +55,11 @@ class Persona(BaseModel):
 FORBIDDEN = [
     (r"\b(ignore|override|bypass|disable|disregard|forget)\b.{0,40}\b(rule|policy|polic(y|ies)|guard|safety|restriction|instruction)s?", "tries to override rules"),
     (r"\b(e-?mail|phone|address|first name|last name|full name|postal|zip|latitude|longitude|ip)\b.{0,30}\b(show|reveal|include|list|display|share)|\b(show|reveal|include|list|display|share)\b.{0,30}\b(e-?mails?|phone|address(es)?|first names?|last names?|full names?|postal|zip|coordinates)\b", "asks for personal data"),
-    (r"\b(delete|drop|truncate|update|insert)\b", "mentions data-changing operations"),
+    # Actions on data or reports, not single words: "call out any revenue drop" and "start with an
+    # update on KPIs" are normal tone rules and must pass (a non-developer cannot debug a false reject).
+    (r"\b(delete|remove|erase|purge|drop|truncate)\b.{0,30}\b(reports?|data|tables?|records?|rows?|orders?|customers?|users?)\b"
+     r"|\b(update|insert|modify|change|overwrite)\b.{0,20}\b(the\s+)?(data(base)?|tables?|records?|rows?)\b",
+     "mentions data-changing operations"),
     (r"\b(system prompt|developer mode|jailbreak|tool call|function call)\b", "references internal mechanics"),
     (r"https?://", "contains links"),
     (r"\b(all users|other users'?|every user'?s) (data|reports)\b", "cross-user access"),

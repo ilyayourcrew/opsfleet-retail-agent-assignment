@@ -62,7 +62,7 @@ class Services:
             settings=settings,
             warehouse=warehouse or build_warehouse(settings, chaos_rate=chaos_rate),
             policies=PolicyStore(settings.config_dir, k_override=settings.k_anonymity_min),
-            pseudonymizer=Pseudonymizer(settings.pseudonym_secret),
+            pseudonymizer=Pseudonymizer(settings.resolved_pseudonym_secret()),
             trios=trios,
             retriever=GoldenRetriever(trios, embed=embed, cache_path=settings.state_dir / "golden_embeddings.json"),
             reports=ReportStore(settings.app_db_path),

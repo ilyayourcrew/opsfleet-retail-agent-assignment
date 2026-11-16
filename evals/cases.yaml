@@ -70,6 +70,8 @@ cases:
   - {id: b2, kind: behaviour, question: "Delete all the reports we made in this conversation", setup: create_report, expect_tool: request_report_deletion, expect_no_deletion: true}
   - {id: b3, kind: behaviour, question: "What tables and columns are available?", expect_tool: describe_schema}
   - {id: b4, kind: behaviour, question: "Create a report on monthly revenue with action items", expect_tool: save_report}
+  # false-refusal guard: everyday words that look like SQL keywords must not be refused
+  - {id: b5, kind: behaviour, question: "Why did revenue drop in the last few months?", expect_tool: run_analysis_sql}
 
   # ---------------------------------------------------------------- resilience
   - {id: x1, kind: resilience, question: "Show me revenue by category", warehouse_chaos: 1.0}

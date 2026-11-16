@@ -22,6 +22,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape as esc
 from rich.panel import Panel
 from rich.table import Table
 
@@ -78,7 +79,7 @@ def _runtime(provider: str | None, warehouse: str | None, chaos: float = 0.0, ll
     try:
         services = Services.build(s, chaos_rate=chaos)
     except WarehouseError as e:
-        console.print(f"[red]Warehouse not available:[/red] {e.message}\n{e.hint}")
+        console.print(f"[red]Warehouse not available:[/red] {esc(e.message)}\n{esc(e.hint or '')}")
         raise typer.Exit(2) from e
     return s, services, ChatEngine(services, build_model(s, chaos_rate=llm_chaos))
 
@@ -95,7 +96,7 @@ def _footer(r) -> str:
 def _render_answer(r) -> None:
     console.print(Markdown(r.answer))
     for c in r.charts:
-        console.print(f"[green]Chart saved:[/green] {c}")
+        console.print(f"[green]Chart saved:[/green] {esc(c)}")
     console.print(f"[dim]{_footer(r)}[/dim]")
 
 
@@ -103,18 +104,18 @@ def _handle_deletion(engine, user: str, session_id: str, r) -> None:
     pend = r.pending_deletion
     if not pend or not pend.reports:
         return
-    t = Table(title=f"[bold red]Permanent deletion requested[/bold red] - {pend.description}", show_lines=False)
+    t = Table(title=f"[bold red]Permanent deletion requested[/bold red] - {esc(pend.description)}", show_lines=False)
     t.add_column("#", justify="right")
     t.add_column("Title")
     t.add_column("Created")
     for rep in pend.reports:
         b = rep.brief()
-        t.add_row(str(b["id"]), b["title"], b["created_at"])
+        t.add_row(str(b["id"]), esc(b["title"]), b["created_at"])  # exact stored title, never parsed as markup
     console.print(t)
     console.print("[yellow]This cannot be undone.[/yellow]")
     typed = console.input(f"Type [bold]{pend.confirm_phrase}[/bold] to confirm, or press Enter to cancel: ")
     ok, msg = engine.confirm_deletion(user, session_id, pend.token, typed)
-    console.print(f"[{'green' if ok else 'yellow'}]{msg}[/]")
+    console.print(f"[{'green' if ok else 'yellow'}]{esc(msg)}[/]")
 
 
 async def _chat_loop(engine, services, user: str, session_id: str | None) -> None:
@@ -159,17 +160,24 @@ async def _chat_loop(engine, services, user: str, session_id: str | None) -> Non
                 _print_stats(services, 24 * 7)
             elif cmd == "persona":
                 p, v = services.personas.active()
-                console.print(f"{p.name}@{v}\n{p.render()}")
+                console.print(esc(f"{p.name}@{v}\n{p.render()}"))
             elif cmd == "whoami":
-                console.print(f"{user}: {ent.display_name} ({ent.role}) - {ent.describe()}")
+                console.print(esc(f"{user}: {ent.display_name} ({ent.role}) - {ent.describe()}"))
             else:
                 console.print("Unknown command - /help")
             continue
         with console.status("Thinking...") as status:
-            r = await engine.ask(user, sid, text, on_status=lambda m: status.update(m))
+            r = await engine.ask(user, sid, text, on_status=lambda m: status.update(esc(m)))
         last_trace = r.trace_id
-        _render_answer(r)
-        _handle_deletion(engine, user, sid, r)
+        try:  # second error boundary: a rendering problem must never end the session
+            _render_answer(r)
+            await asyncio.to_thread(_handle_deletion, engine, user, sid, r)
+        except (EOFError, KeyboardInterrupt):
+            if r.pending_deletion:
+                services.reports.cancel(r.pending_deletion.token, user)
+            console.print("[yellow]Deletion cancelled - nothing was deleted.[/yellow]")
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]Display error ({type(e).__name__}); your conversation is intact.[/red]")
     console.print("[dim]Bye.[/dim]")
 
 
@@ -195,7 +203,7 @@ def _print_reports(services, user: str) -> None:
     t = Table("#", "Title", "Created")
     for r in reps:
         b = r.brief()
-        t.add_row(str(b["id"]), b["title"], b["created_at"])
+        t.add_row(str(b["id"]), esc(b["title"]), b["created_at"])
     console.print(t)
 
 
@@ -213,9 +221,9 @@ def _print_trace(services, trace_id: str) -> None:
             f"sql_failures={turn['sql_failures']} empty={turn['sql_empty']} self_corrected={turn['sql_self_corrected']} "
             f"guard_blocks={turn['guard_blocks']} pii_redactions={turn['pii_redactions']} fallback={bool(turn['fallback_used'])}\n"
             f"persona={turn['persona']}  golden={json.loads(turn['golden_ids'] or '[]')}  provider={turn['provider']}\n"
-            f"Q: {turn['question']}")
+            f"Q: {esc(turn['question'] or '')}")
     if turn["error"]:
-        head += f"\n[red]error: {turn['error']}[/red]"
+        head += f"\n[red]error: {esc(turn['error'])}[/red]"
     console.print(Panel(head, border_style="magenta"))
     t = Table("#", "kind", "name", "status", "ms", "details", show_lines=True)
     for i, s in enumerate(services.traces.spans(tid)):
@@ -225,13 +233,17 @@ def _print_trace(services, trace_id: str) -> None:
         elif s["name"] == "response":
             detail = f"{a.get('model_version', '')} in={a.get('tokens_in')} out={a.get('tokens_out')}\n" + json.dumps(a.get("parts"), default=str)[:600]
         elif s["name"] == "run_analysis_sql":
-            detail = f"attempt {a.get('attempt')}: {a.get('purpose', '')}\nSQL: {a.get('sql', '')[:500]}"
+            detail = esc(f"attempt {a.get('attempt')}: {a.get('purpose', '')}\nSQL: {a.get('sql', '')[:500]}")
             if a.get("error"):
-                detail += f"\n[red]{a.get('error_type')}: {a.get('error')}[/red]"
+                detail += f"\n[red]{esc(str(a.get('error_type')))}: {esc(str(a.get('error')))}[/red]"
+            if a.get("job_id"):
+                detail += f"\nbigquery_job={esc(str(a['job_id']))}"
             if "rows" in a:
                 detail += f"\nrows={a['rows']} bytes={a.get('bytes', 0)} cache={a.get('cache_hit', False)}"
         else:
             detail = json.dumps(a, default=str)[:500]
+        if s["name"] != "run_analysis_sql":
+            detail = esc(detail)
         t.add_row(str(i), s["kind"], s["name"], s["status"], f"{s['duration_ms']:.0f}", detail)
     console.print(t)
     console.print(Panel(Markdown(turn["answer_preview"] or ""), title="answer (preview)", border_style="dim"))
@@ -243,7 +255,7 @@ def _print_stats(services, hours: float) -> None:
     m = compute_metrics(services.traces, hours)
     t = Table("metric", "value", title=f"Agent metrics - last {hours:g}h")
     for k, v in m.items():
-        t.add_row(k, json.dumps(v) if isinstance(v, dict) else str(v))
+        t.add_row(k, esc(json.dumps(v) if isinstance(v, dict) else str(v)))
     console.print(t)
 
 

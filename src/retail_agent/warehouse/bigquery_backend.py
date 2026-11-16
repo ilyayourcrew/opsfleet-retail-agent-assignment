@@ -63,10 +63,17 @@ class BigQueryRunner:
         cfg = self._bq.QueryJobConfig(
             use_query_cache=True,
             maximum_bytes_billed=self.max_bytes_billed,
+            # Server-side limit: BigQuery cancels the job itself. A client-side timeout alone only stops
+            # *waiting* - the job would keep running (and billing) after we gave up on it.
+            job_timeout_ms=int(self.timeout_s * 1000),
             labels={"app": "retail-agent"},
         )
         job = self.client.query(sql_query, job_config=cfg, location=self.location)
-        rows = job.result(timeout=self.timeout_s, max_results=max_rows)
+        try:
+            rows = job.result(timeout=self.timeout_s, max_results=max_rows)
+        except BaseException:
+            _cancel_quietly(job)  # timeouts, errors, Ctrl+C: never leave an orphaned job running
+            raise
         df = rows.to_dataframe(create_bqstorage_client=False)
         return df, job
 
@@ -93,6 +100,15 @@ class BigQueryRunner:
             }
             for f in table.schema
         ]
+
+
+def _cancel_quietly(job: Any) -> None:
+    try:
+        if not job.done():
+            job.cancel()
+            log.info("Cancelled BigQuery job %s", getattr(job, "job_id", "?"))
+    except Exception:  # noqa: BLE001 - best effort; the server-side job timeout is the backstop
+        log.warning("Could not cancel BigQuery job %s", getattr(job, "job_id", "?"))
 
 
 def classify_bigquery_error(exc: BaseException) -> WarehouseError:

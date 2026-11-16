@@ -155,6 +155,8 @@ class AnalysisService:
             turn.bq_cost_usd += bytes_processed / 2**40 * cfg.bq_price_per_tib
             self.s.result_cache.set(key, df)
             attrs.update(bytes=bytes_processed, warehouse_ms=round(res.duration_ms))
+            if res.job_id:  # joins this trace to BigQuery's own job history (INFORMATION_SCHEMA.JOBS)
+                attrs["job_id"] = res.job_id
 
         truncated = len(df) > cfg.max_result_rows
         df = df.head(cfg.max_result_rows)

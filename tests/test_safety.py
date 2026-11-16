@@ -263,6 +263,10 @@ def test_pseudonymizer_is_stable_and_keyed():
         ("Please DROP TABLE users", "data_mutation"),
         ("Give me the email addresses of our top 10 customers", "pii_request"),
         ("What are the full names and phone numbers of buyers in Texas?", "pii_request"),
+        ("Give me a breakdown of customer names by region", "pii_request"),
+        ("delete from orders where 1=1", "data_mutation"),
+        ("UPDATE orders SET status = 'Complete'", "data_mutation"),
+        ("insert into users values (1, 'x')", "data_mutation"),
     ],
 )
 def test_heuristic_guard_blocks(msg, category):
@@ -278,6 +282,14 @@ def test_heuristic_guard_blocks(msg, category):
         "Why did our churn rate spike last month?",
         "Who are our top customers by total spend?",
         "Create a report for Q1 including insights and action items for Q2",
+        # regression: everyday executive words that look like SQL keywords were refused as "data mutation"
+        "Why did revenue drop last month?",
+        "What is the drop-off between first and second purchase?",
+        "Should we alter our discount strategy for Texas?",
+        "Truncate the list to the top 5 brands",
+        "Update me on Q1 sales",
+        "Create a table of top products by revenue",
+        "Ignore cancelled orders and show gross revenue",
     ],
 )
 def test_heuristic_guard_allows_legit_questions(msg):

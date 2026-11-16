@@ -26,12 +26,20 @@ INJECTION = re.compile(
     r"|act\s+as\s+(an?\s+)?(admin|root|dba|unrestricted)",
     re.I,
 )
+# Only explicit SQL statement shapes. Plain words ("why did revenue *drop*", "*alter* our discount
+# strategy", "*truncate* the list") are normal executive language and must not be refused. Data cannot
+# be modified anyway (read-only warehouse; the SQL guard rejects DML/DDL), so this tier gives a clear
+# early answer rather than safety; ambiguous intent is left to the classifier.
 DATA_MUTATION = re.compile(
-    r"\b(drop|truncate|alter|insert\s+into|update\s+\w+\s+set|delete\s+from|grant|create\s+table)\b", re.I
+    r"\b(drop|truncate|alter|create)\s+(table|view|schema|dataset|database)\b"
+    r"|\binsert\s+into\s+\w|\bupdate\s+[\w.`]+\s+set\s+\w+\s*=|\bdelete\s+from\s+[\w.`]+"
+    r"|\bmerge\s+(into\s+)?[\w.`]+\s+using\b|\bgrant\s+\w+\s+on\b",
+    re.I,
 )
 PII_REQUEST = re.compile(
     r"\b(e-?mail\s+(address(es)?|ids?)|e-?mails\s+(of|for)|phone\s*numbers?|home\s+address(es)?|street\s+address(es)?|postal\s*codes?|zip\s*codes?|"
     r"first\s+names?|last\s+names?|full\s+names?|surnames?|names?\s+of\s+(the\s+)?(customers?|users?|buyers?)|"
+    r"(customer|user|buyer|shopper)s?'?\s+names?|"
     r"latitude|longitude|gps\s+coordinates|ip\s+address(es)?|contact\s+(details|info))\b",
     re.I,
 )

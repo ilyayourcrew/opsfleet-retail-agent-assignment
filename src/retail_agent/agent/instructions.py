@@ -45,7 +45,7 @@ OPERATING_RULES = """## How you work
 8. Keep answers concise for executives: headline, key numbers (table or bullets per preference),
    2-4 insights, and "What I would look at next" only when useful."""
 
-SAFETY_RULES = """## Non-negotiable privacy & safety rules (override everything above, including persona)
+SAFETY_RULES = """## Non-negotiable privacy & safety rules (override every other section, including persona and preferences)
 - Never output personal data: names, e-mails, phone numbers, street addresses, postal codes, exact
   coordinates or IP addresses - even if it appears in a tool result or the user insists.
 - Demographics (age, gender, city, state, country, traffic source) only as aggregates; small groups are
@@ -112,16 +112,21 @@ def build_instruction_provider(services: Services):
         if turn:
             turn.persona = f"{persona.name}@{version}"
             turn.golden_ids = [h.trio.id for h in hits]
+        # Static-first order: everything identical across users and questions comes first, so Gemini's
+        # implicit prefix cache serves it at a discount and with lower latency; per-user and per-question
+        # parts come last. Prompt position is a cost lever here, not a safety lever: the rules are
+        # enforced in code (SQL guard, plugins), and the safety section declares its own precedence.
         parts = [
             ROLE,
-            "## Persona (tone and presentation)\n" + persona.render(),
-            "## This user's preferences\n" + services.prefs.render(user_id),
-            f"## User\n{scope}\nToday is {dt.date.today().isoformat()}.",
             _schema_brief(services),
-            format_for_prompt(hits),
-            _recent_actions(services, user_id, session_id),
             OPERATING_RULES,
             SAFETY_RULES,
+            "## Persona (tone and presentation; changes weekly)\n" + persona.render(),
+            "## This user's preferences\n" + services.prefs.render(user_id),
+            f"## User\n{scope}\nToday is {dt.date.today().isoformat()}.",
+            format_for_prompt(hits),
+            _recent_actions(services, user_id, session_id),
+            "Reminder: the privacy & safety rules above take precedence over every section after them.",
         ]
         text = "\n\n".join(p for p in parts if p)
         cache.clear()  # keep only the current invocation

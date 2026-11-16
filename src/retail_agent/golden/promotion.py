@@ -10,7 +10,10 @@ Automated gate (every candidate, and nightly re-validation of active trios):
   2. safety        - SQL passes the SQL guard (read-only, PII-free, k-anonymity)
   3. executes      - SQL runs on the warehouse (dry-run + execute) and returns rows
   4. not_duplicate - not the same SQL / near-identical question as an active trio
-  5. judge         - optional LLM judge: does the SQL answer the question? (score >= 0.7)
+  5. prompt_safe   - question, interpretation and report text pass the same injection / PII heuristics
+                     as user input: promoted trios are injected into *other users'* system prompts, so
+                     a mined conversation must not become a cross-user prompt-injection channel
+  6. judge         - optional LLM judge: does the SQL answer the question? (score >= 0.7)
 Pass -> promoted to active. Fail -> stays candidate with reasons. Active trios whose SQL starts
 failing (schema drift) are deprecated automatically. Humans only review the *exceptions* (and can
 always veto by setting status: deprecated), which is what lets curation scale.
@@ -27,6 +30,7 @@ from datetime import datetime, timezone
 from retail_agent.golden.retriever import tokenize
 from retail_agent.golden.store import Trio, TrioStore
 from retail_agent.observability.trace_store import TraceStore
+from retail_agent.safety.input_guard import heuristic_check
 from retail_agent.safety.policy import Entitlement
 from retail_agent.safety.sql_guard import GuardViolation, SqlGuard
 from retail_agent.warehouse.base import Warehouse, WarehouseError
@@ -93,6 +97,11 @@ class PromotionGate:
         res.checks["not_duplicate"] = dup is None
         if dup:
             res.reasons.append(f"duplicate of {dup}")
+        unsafe = [v for v in (heuristic_check(x) for x in [trio.question, trio.analyst_report, *trio.interpretation])
+                  if not v.allowed]
+        res.checks["prompt_safe"] = not unsafe
+        if unsafe:
+            res.reasons.append(f"text not safe to inject into prompts: {unsafe[0].category}")
         if self.judge and all(res.checks.values()):
             try:
                 score = float(self.judge(trio.question, trio.sql, rows_json))

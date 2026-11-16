@@ -159,6 +159,16 @@ class GoldenRetriever:
         return hits
 
 
+_FIGURE = re.compile(r"(?<![A-Za-z])\d[\d,]*(?:\.\d+)?")
+
+
+def mask_figures(text: str) -> str:
+    """Historical report figures are stale, company-wide (possibly outside this user's entitlement) and
+    tempt the model to copy them into new answers. The excerpt is there to show *how* analysts reasoned
+    and what they recommended, so its numbers are masked ("~20% less" -> "~N% less"; "Q1" is kept)."""
+    return _FIGURE.sub("N", text)
+
+
 def format_for_prompt(hits: list[Hit]) -> str:
     """Render retrieved trios as few-shot 'how our analysts approached this' guidance."""
     if not hits:
@@ -174,6 +184,6 @@ def format_for_prompt(hits: list[Hit]) -> str:
         parts.append(
             f"### Example {n} - {t.id} (intent: {t.intent})\nQuestion: {t.question}\n"
             f"Analyst interpretation:\n{notes}\nSQL:\n```sql\n{t.sql.strip()}\n```\n"
-            f"Analyst report excerpt: {t.analyst_report.strip()[:600]}"
+            f"Analyst report excerpt (figures masked): {mask_figures(t.analyst_report.strip()[:600])}"
         )
     return "\n\n".join(parts)

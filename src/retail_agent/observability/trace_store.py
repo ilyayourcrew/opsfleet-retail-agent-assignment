@@ -92,6 +92,7 @@ class TurnState:
     pii_redactions: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_tokens: int = 0
     llm_cost_usd: float = 0.0
     bq_bytes: int = 0
     bq_cost_usd: float = 0.0
@@ -147,6 +148,10 @@ class TraceStore:
         self._con = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
         self._con.row_factory = sqlite3.Row
         self._con.executescript(SCHEMA)
+        # additive migration for stores created by an earlier version
+        cols = {r[1] for r in self._con.execute("PRAGMA table_info(turns)")}
+        if "cached_tokens" not in cols:
+            self._con.execute("ALTER TABLE turns ADD COLUMN cached_tokens INTEGER DEFAULT 0")
 
     def save_turn(self, t: TurnState) -> None:
         ended = time.time()
@@ -157,7 +162,7 @@ class TraceStore:
             "refusal_category": t.refusal_category, "model_calls": t.model_calls, "tool_calls": t.tool_calls,
             "sql_attempts": t.sql_attempts, "sql_failures": t.sql_failures, "sql_empty": t.sql_empty,
             "sql_self_corrected": t.sql_self_corrected, "guard_blocks": t.guard_blocks,
-            "pii_redactions": t.pii_redactions, "input_tokens": t.input_tokens, "output_tokens": t.output_tokens,
+            "pii_redactions": t.pii_redactions, "input_tokens": t.input_tokens, "output_tokens": t.output_tokens, "cached_tokens": t.cached_tokens,
             "llm_cost_usd": round(t.llm_cost_usd, 6), "bq_bytes": t.bq_bytes, "bq_cost_usd": round(t.bq_cost_usd, 6),
             "fallback_used": int(t.fallback_used), "degraded": int(t.degraded),
             "budget_exceeded": int(t.budget_exceeded), "error": scrub(t.error[:1000]), "persona": t.persona,

@@ -65,6 +65,8 @@ def compute_metrics(store: TraceStore, since_hours: float = 24 * 7) -> dict[str,
         "budget_exceeded_turns": sum(t["budget_exceeded"] for t in turns),
         "tokens_in": sum(t["input_tokens"] for t in turns),
         "tokens_out": sum(t["output_tokens"] for t in turns),
+        "prompt_cache_hit_share": round(sum(t.get("cached_tokens") or 0 for t in turns)
+                                        / max(sum(t["input_tokens"] for t in turns), 1), 3),
         "cost_usd_total": round(sum(t["llm_cost_usd"] + t["bq_cost_usd"] for t in turns), 4),
         "cost_usd_per_turn": round(sum(t["llm_cost_usd"] + t["bq_cost_usd"] for t in turns) / n, 5),
         "bq_gb_scanned": round(sum(t["bq_bytes"] for t in turns) / 1e9, 3),

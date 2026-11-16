@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     k_anonymity_min: int = 5
     max_result_rows: int = 200
     rows_shown_to_llm: int = 50
-    pseudonym_secret: str = "change-me"
+    pseudonym_secret: str = ""  # empty -> a random per-installation key in state_dir (see resolved_pseudonym_secret)
 
     # --- Agent behaviour / budgets -------------------------------------------------------
     max_sql_attempts: int = 3
@@ -95,9 +95,27 @@ class Settings(BaseSettings):
     def trace_log_path(self) -> Path:
         return self.state_dir / "traces.jsonl"
 
+    def resolved_pseudonym_secret(self) -> str:
+        """HMAC key for customer pseudonyms. A key that ships in the repo would make every pseudonym
+        reversible (ids are small integers: hash them all), so an unset or placeholder value is replaced
+        by a random key generated once per installation and kept in the git-ignored state dir.
+        Production: Secret Manager."""
+        if self.pseudonym_secret and self.pseudonym_secret not in _PLACEHOLDER_SECRETS:
+            return self.pseudonym_secret
+        key_file = self.state_dir / "pseudonym.key"
+        if not key_file.exists():
+            import secrets
+
+            self.state_dir.mkdir(parents=True, exist_ok=True)
+            key_file.write_text(secrets.token_hex(32), encoding="utf-8")
+        return key_file.read_text(encoding="utf-8").strip()
+
     def ensure_dirs(self) -> None:
         for d in (self.state_dir, self.charts_dir):
             d.mkdir(parents=True, exist_ok=True)
+
+
+_PLACEHOLDER_SECRETS = {"change-me", "changeme", "secret"}
 
 
 @lru_cache(maxsize=1)

@@ -43,3 +43,34 @@ def test_circuit_opens_after_repeated_failures(warehouse):
     assert kinds[:2] == [ErrorKind.TRANSIENT, ErrorKind.TRANSIENT]
     assert kinds[-1] == ErrorKind.UNAVAILABLE  # fail fast, no more calls to the dead dependency
     assert always_down.injected == 2
+
+
+def test_bigquery_job_is_cancelled_when_the_client_stops_waiting():
+    """Cost safety: a client-side timeout alone leaves the job running (and billing) in BigQuery."""
+    from google.cloud import bigquery
+
+    from retail_agent.warehouse.bigquery_backend import BigQueryRunner
+
+    class Job:
+        job_id, cancelled = "job-1", False
+
+        def result(self, timeout, max_results):
+            raise TimeoutError("client stopped waiting")
+
+        def done(self):
+            return False
+
+        def cancel(self):
+            Job.cancelled = True
+
+    class Client:
+        def query(self, sql, job_config, location):
+            Client.cfg = job_config
+            return Job()
+
+    runner = object.__new__(BigQueryRunner)  # no network / credentials needed
+    runner._bq, runner.client, runner.location, runner.max_bytes_billed, runner.timeout_s = bigquery, Client(), "US", 10**9, 2.0
+    with pytest.raises(TimeoutError):
+        runner.run("SELECT 1")
+    assert Job.cancelled
+    assert int(Client.cfg.job_timeout_ms) == 2000 and Client.cfg.maximum_bytes_billed == 10**9  # server-side backstops

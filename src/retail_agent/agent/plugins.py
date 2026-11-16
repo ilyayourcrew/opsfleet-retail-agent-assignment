@@ -95,6 +95,8 @@ class ObservabilityPlugin(BasePlugin):
         u = llm_response.usage_metadata
         tin = int(getattr(u, "prompt_token_count", 0) or 0)
         tout = int(getattr(u, "candidates_token_count", 0) or 0) + int(getattr(u, "thoughts_token_count", 0) or 0)
+        tcached = int(getattr(u, "cached_content_token_count", 0) or 0)  # implicit prefix-cache hits
+        turn.cached_tokens += tcached
         turn.input_tokens += tin
         turn.output_tokens += tout
         cfg = self.s.settings
@@ -104,6 +106,7 @@ class ObservabilityPlugin(BasePlugin):
         if version and ("fallback" in version or (primary and not version.startswith(primary))):
             turn.fallback_used = True
         turn.span("model", "response", duration_ms=dur, model_version=version, tokens_in=tin, tokens_out=tout,
+                  tokens_cached=tcached,
                   finish_reason=str(llm_response.finish_reason or ""), parts=_summarize_parts(llm_response.content),
                   error=llm_response.error_message or "")
         return None
