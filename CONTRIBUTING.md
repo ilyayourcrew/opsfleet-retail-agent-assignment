@@ -9,7 +9,7 @@ The agent is non-deterministic. Its safety must not be. These rules keep both tr
 | **Safety-critical** | `safety/sql_guard.py`, `safety/pii.py`, `config/policy.yaml`, `agent/plugins.py`, `reports/store.py` (deletion), `config/entitlements.yaml` | an adversarial test for the new or changed behaviour (it must fail without the change), full `pytest`, offline eval gate | 2, one of them the safety owner |
 | **Behavioural** | `agent/instructions.py`, tool docstrings, model ids, retrieval | `pytest`, offline eval gate, **online eval gate** (`workflow_dispatch` with `online: true`) | 1 |
 | **Content** (no code) | personas, golden trios | their own automated gates (`persona publish`, `learn`); no PR needed | none (gated) |
-| **Dependency** | Dependabot PRs | CI; for `google-adk` and `sqlglot` also the online eval gate (the safety logic depends on their internals) | 1 |
+| **Dependency** | version upgrades, one PR each | CI; for `google-adk` and `sqlglot` also the online eval gate (the safety logic depends on their internals) | 1 |
 | Everything else | CLI, docs, scripts | CI | 1 |
 
 ## Definition of done

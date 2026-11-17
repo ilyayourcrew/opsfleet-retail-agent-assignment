@@ -245,7 +245,7 @@ that tries 20 ways to smuggle PII" is strong.
   * `requirements.txt` installs the tested set: exact versions for ADK and sqlglot, whose internals
     the safety logic depends on; patch ranges for everything else.
   * Python 3.11–3.14, with clean installs verified at both ends.
-  * CI runs the matrix and the eval gate; Dependabot proposes upgrades through it.
+  * CI runs the matrix and the eval gate; every dependency upgrade is its own PR through it.
 * **Alternative rejected.** Lower bounds only (the first version). That allowed sqlglot 26 under a
   guard written against sqlglot 30's AST, and it claimed Python 3.10 support that ADK does not have
   (finding F16).
@@ -374,7 +374,8 @@ but wrong definition, which the judge, the nightly re-validation and per-trio fe
 
 **Q17. Why exact pins? Doesn't that block security fixes?**
 Patch ranges allow fixes for most libraries. The exact pins are the two whose internals the safety
-code relies on. Dependabot proposes upgrades weekly, and CI plus the eval gate decide. An unpinned
+code relies on. Each upgrade is its own PR (proposed automatically by Dependabot or Renovate in
+production), and CI plus the eval gate decide. An unpinned
 guard dependency is the bigger risk: the guard would silently run against a different AST.
 
 **Q18. Isn't this over-engineered for a 6–12 hour assignment?**
@@ -435,7 +436,7 @@ fails without the fix.
 | F15 | **CLI confirmation altered or crashed by titles.** Rich parsed model-written titles as markup: "Q1 [draft] review" was shown as "Q1  review" (not the exact list), and "[/bold]" crashed the CLI mid-confirmation. | **High (R3, R5)** | All untrusted text escaped; a second error boundary around rendering; Ctrl+C at the prompt cancels the pending deletion. | `tests/test_cli.py` |
 | F16 | **Not runnable as documented.** The README said Python 3.10 works, but ADK 2.14 requires 3.11+. Dependency floors (sqlglot>=26) allowed versions the guard was never tested on. 3.14 was excluded without reason. | High (deliverable 5) | Tested set pinned; Python 3.11–3.14; clean-clone installs verified on 3.11 and 3.14. | CI matrix |
 | F17 | **Public pseudonymisation key.** The default HMAC key "change-me" ships in the repo, and ids are small integers, so every `C-…` pseudonym was reversible. | Medium (privacy claim) | Random per-installation key in the state dir. | covered by existing pseudonymiser tests and config |
-| F18 | **No CI** although the design names a CI gate. | Medium (team) | GitHub Actions (3.11/3.12/3.14, lint, tests, offline eval; manual online eval), Dependabot, CONTRIBUTING, PR template. | the workflow itself |
+| F18 | **No CI** although the design names a CI gate. | Medium (team) | GitHub Actions (3.11/3.12/3.14, lint, tests, offline eval; manual online eval), CONTRIBUTING, PR template. | the workflow itself |
 | F19 | **Prompt order defeated caching.** Per-user text came first, so no two requests shared a prefix. | Low (cost, latency) | Static-first order; cached tokens traced; prefix pinned by a test. | `test_system_prompt_has_a_long_shared_prefix_for_prompt_caching` |
 | F20 | **Found by the online gate failing (p95 69.9 s):** the fixed 20 s per-attempt deadline cut the primary off mid-report; a weaker model regenerated the answer (+45 s). | High (latency SLO) | Stream the inner call; a time-to-first-token deadline decides "hung", a total cap bounds long answers. g3: 73.7 → 17.7 s. | `test_long_generation_that_has_started_is_not_thrown_away`, `test_generation_beyond_the_total_cap_falls_back_without_tripping` |
 | F21 | **Found by execution accuracy (g4 = 0.07):** the agent dropped the net-revenue filter to compute return rates in one query, then labelled gross revenue "net". Real numbers, fluent answer, wrong definition. | High (correctness, silently wrong) | Definition note in the schema catalog (static prompt): conditional SUM for net revenue when rates are needed. g4 then 1.00 in 3/3 runs. | eval g4 (online) |

@@ -422,7 +422,8 @@ tools' context) are designed but not built.
 * **Terminal output is untrusted text:** report titles, SQL and user input are escaped before the CLI
   renders them, so model-written text cannot alter what the confirmation step shows or crash it.
 * **Supply chain:** the tested dependency set is pinned, exactly for ADK and sqlglot because the safety
-  logic relies on their internals. Upgrades go through Dependabot PRs and the eval gate.
+  logic relies on their internals. Each upgrade is its own PR through the eval gate (proposed
+  automatically by Dependabot or Renovate in production).
 * **Audit:** report saves, deletion requests, confirmations, cancellations and denials are logged with
   user and session; persona publications are versioned with author.
 
@@ -450,7 +451,7 @@ tools' context) are designed but not built.
   * on every push and PR: ruff, `pytest` on Python 3.11/3.12/3.14, and the offline eval gate;
   * on demand: the online eval gate.
 
-  Dependabot proposes dependency upgrades through the same gate. In GCP production the same steps
+  Dependency upgrades go through the same gate as separate PRs. In GCP production the same steps
   run in Cloud Build on every PR; merges to
   `main` build a container (Artifact Registry) and deploy `agent-api` to a staging Cloud Run service,
   then run the online eval suite against staging; promotion to prod requires the gate to pass.
