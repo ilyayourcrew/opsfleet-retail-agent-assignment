@@ -1,18 +1,14 @@
-# Design decisions: rationale, trade-offs and how to defend them
+# Design decisions: rationale and trade-offs
 
 This is the "why" companion to [TECHNICAL_DESIGN.md](TECHNICAL_DESIGN.md). It covers:
 - each major decision, in short ADR form: the decision, the constraint that drove it, the
   alternatives, why this option won, what it costs, the evidence in this repository, and what would
   change the decision;
-- the questions a reviewer is likely to ask, with short answers;
-- what two tech-lead review passes found and fixed (21 findings, each with a regression test or eval case);
-- a prioritised roadmap;
-- how a team would build and run it, and a five-minute walkthrough for the review meeting.
-
-Rule of thumb when defending any choice: **name the constraint first, then the alternative you
-rejected, then the evidence.** "I chose X" is weak. "The client said PII must never reach the
-LLM, so prompt rules were not enough. I rewrite the SQL onto PII-free views, and here is the test
-that tries 20 ways to smuggle PII" is strong.
+- frequently asked questions, with short answers;
+- what two internal review passes found and fixed (21 findings, each with a regression test or eval
+  case);
+- the evidence and a prioritised roadmap;
+- how a team would build and run the system.
 
 ---
 
@@ -85,9 +81,9 @@ that tries 20 ways to smuggle PII" is strong.
   Exotic SQL is rejected (fail closed) and the model rewrites it.
 * **Evidence.** `tests/test_safety.py` (DML/DDL, smuggling via CTEs, sub-queries, structs, star,
   whole-row, table functions, other datasets) and red-team eval cases r1–r10.
-* **Defend with.** "The LLM is an untrusted SQL author. I treat its SQL like user input to a
-  database: parse it, constrain it, rewrite it. The prompt explains the rules so the model rarely
-  hits them, but nothing depends on the model obeying."
+* **Principle.** The LLM is an untrusted SQL author. Its SQL is handled like user input to a
+  database: parsed, constrained and rewritten. The prompt explains the rules so the model rarely
+  hits them, but nothing depends on the model obeying.
 
 ### D5. k-anonymity by injected `HAVING COUNT(DISTINCT customer) >= k` plus column lineage
 * **Constraint.** Age, gender, city, state, country and traffic_source are allowed only in
@@ -223,8 +219,8 @@ that tries 20 ways to smuggle PII" is strong.
 * **Evidence.** Finding F10: the original keyword list refused "why did revenue drop", "alter our
   discount strategy" and "truncate the list". There is now a false-refusal test list and the eval case
   b5.
-* **How to say it.** "I measure guards on false refusals as well as on attacks. A guard that blocks
-  the CEO's first question is worse than no guard, because the safety comes from the data layer."
+* **Principle.** Guards are measured on false refusals as well as on attacks. A guard that blocks
+  the CEO's first question is worse than no guard, because the safety comes from the data layer.
 
 ### D17. The learning loop is a write path into other users' prompts, so it is gated like one
 * **Constraint.** Automated promotion (the client wants no human bottleneck), and promoted trios are
@@ -264,7 +260,7 @@ that tries 20 ways to smuggle PII" is strong.
 
 ---
 
-## 2. Questions a reviewer is likely to ask
+## 2. Frequently asked questions
 
 **Q1. Why let the LLM write raw SQL at all?**
 Executives ask open questions that no fixed query set covers. The risk is contained structurally:
@@ -287,10 +283,10 @@ blast radius is small by design:
 What is not covered yet: qualitative claims ("because of a stockout"). They are framed as
 hypotheses by the persona rules.
 
-**Q4. Your golden eval looks good, but isn't the answer in the prompt?**
+**Q4. Isn't the golden-eval answer already in the prompt?**
 Partly, yes, and that is why held-out cases (own reference SQL, no matching trio) and a
-`--no-golden` ablation were added. Report all three numbers. The gap between "with" and "without"
-trios is the measured value of requirement 1.
+`--no-golden` ablation were added. All three numbers are reported. The gap between "with" and
+"without" trios is the measured value of requirement 1.
 
 **Q5. p95 latency was 38 s against a 10–30 s target.**
 The tail came from the first turn in a fresh process discovering that the primary model was
@@ -333,10 +329,9 @@ right?", which needs execution against the warehouse. The cases could also be ex
 format for trajectory checks; the two are complementary.
 
 **Q11. Is "hard delete" really hard?**
-Now, yes: see D7 and finding F3, with a test that reads the raw file. Be precise about scope:
-conversation transcripts follow a separate session-retention policy (30 days), and production
-backups need an expiry inside the window the client accepts. Raise this with the client
-explicitly.
+Yes: see D7 and finding F3, with a test that reads the raw file. Scope: conversation transcripts
+follow a separate session-retention policy (30 days), and production backups need an expiry inside
+the window the client accepts. That retention window needs explicit agreement with the client.
 
 **Q12. Why HMAC-pseudonymise customer ids when the client didn't list ids as PII?**
 Ids are the join key to PII in other systems (the CRM). Pseudonyms keep follow-ups working
@@ -349,7 +344,7 @@ outside it. It costs nothing.
 - **Open:** the LLM scope classifier (an outage must not block analysis, and data-layer controls
   still apply), and embeddings (fall back to BM25).
 
-**Q14. What would you do differently with more time?**
+**Q14. What comes next with more time?**
 - Engine-level privacy in BigQuery (aggregation thresholds, then differential privacy).
 - A semantic layer for core metrics.
 - Streaming answers and a web UI.
@@ -357,8 +352,7 @@ outside it. It costs nothing.
 - Nightly repeated evals with confidence intervals.
 - A larger false-refusal eval set, sampled from real questions.
 
-**Q15. Your first version refused "why did revenue drop?". How did that happen, and how do you stop
-it happening again?**
+**Q15. Why did an earlier version refuse "why did revenue drop?", and what prevents it now?**
 The keyword list was written from the attacker's side only, and the eval set had no false-refusal
 cases. The fix is in the process as well as the regex:
 - false refusals are a tested category (a list of legitimate questions that must pass, and eval case
@@ -378,23 +372,10 @@ code relies on. Each upgrade is its own PR (proposed automatically by Dependabot
 production), and CI plus the eval gate decide. An unpinned
 guard dependency is the bigger risk: the guard would silently run against a different AST.
 
-**Q18. Isn't this over-engineered for a 6–12 hour assignment?**
-The brief asks for a production-ready HLD and an elegant prototype of four requirements. The
-prototype stays small at the core:
-- one agent;
-- two plugins;
-- one governed SQL path;
-- one confirmation flow.
-
-Everything else is either required design shown working (learning loop, persona, evals) or a fix
-with a test. The reading guide in the README gives a 15-minute path through five files. If asked
-what I would cut: the Ollama provider and the chart tool first. Neither is required, but each
-demonstrates a requirement claim (offline operation, extensibility).
-
-**Q19. How would you staff and run this as a team?**
+**Q18. How would a team build and run this?**
 See §6.
 
-**Q20. What is the biggest remaining risk?**
+**Q19. What is the biggest remaining risk?**
 Silent wrong answers: a fluent answer computed with a subtly wrong definition. The ablation showed
 exactly this when trios were removed. The mitigations are layered:
 - trios carry the definitions;
@@ -441,20 +422,19 @@ fails without the fix.
 | F20 | **Found by the online gate failing (p95 69.9 s):** the fixed 20 s per-attempt deadline cut the primary off mid-report; a weaker model regenerated the answer (+45 s). | High (latency SLO) | Stream the inner call; a time-to-first-token deadline decides "hung", a total cap bounds long answers. g3: 73.7 → 17.7 s. | `test_long_generation_that_has_started_is_not_thrown_away`, `test_generation_beyond_the_total_cap_falls_back_without_tripping` |
 | F21 | **Found by execution accuracy (g4 = 0.07):** the agent dropped the net-revenue filter to compute return rates in one query, then labelled gross revenue "net". Real numbers, fluent answer, wrong definition. | High (correctness, silently wrong) | Definition note in the schema catalog (static prompt): conditional SUM for net revenue when rates are needed. g4 then 1.00 in 3/3 runs. | eval g4 (online) |
 
-**What the pattern says (useful in the interview).** The first pass found attack-side holes. The
+**What the pattern says.** The first pass found attack-side holes. The
 second pass found mostly *failure-to-serve* and *operational* holes: false refusals, cost leaks,
 install failures, a crash in the confirmation step. Those are what a client experiences first.
 Hence D16 and D19.
 
-F20 and F21 came from the *online gate failing*. That is the gate doing its job, and it is a good
-story to tell: the release was blocked, the traces showed exactly why (a deadline design flaw and a
-metric-definition slip), each cause got a fix and a test, and the targeted re-run passed. F21 is
-also the clearest live example of the biggest risk named in Q20: real numbers, fluent text, wrong
-definition. Only the execution-accuracy eval caught it.
+F20 and F21 were found because the *online gate failed* and blocked the release. The traces showed
+the causes (a deadline design flaw and a metric-definition slip), each cause got a fix and a test,
+and the targeted re-run passed. F21 is also the clearest live example of the biggest risk named in
+Q19: real numbers, fluent text, wrong definition. Only the execution-accuracy eval caught it.
 
 ---
 
-## 4. Evidence to quote
+## 4. Evidence
 
 * Offline: 153 tests; eval gate passed (33 cases: golden 1.00, red team 10/10, behaviour 5/5,
   resilience 3/3, 0 PII leaks, numeric grounding 0.98). Clean-clone installs (`pip install -r
@@ -464,13 +444,12 @@ definition. Only the execution-accuracy eval caught it.
 * Online, second pass (2026-11-17): the full gate **failed on p95 latency (69.9 s)**. Held-out 1.00,
   judge 4.94, red team 10/10, behaviour 5/5, 0 PII leaks. Diagnosis: F20 and F21. After the fixes, a
   targeted re-run **passed**: p95 43.3 s, golden cases 1.00, g4 1.00 in 3/3 extra runs. The full gate
-  was not repeated the same day (the primary model's free-tier quota was used up); say so if asked.
+  was not repeated the same day (the primary model's free-tier quota was used up).
 * Online held-out and ablation (Gemini and BigQuery): golden execution accuracy **1.00 with trios vs
   0.41 without**. The failures without trios are exactly the cases where a business definition
   matters (margin, channel value, delivery time). Held-out questions score 1.00 either way, numeric
   grounding is 0.99, and red-team r9/r10 are refused. Details and caveats in
-  [EVALUATION.md §4](EVALUATION.md#4-results). This is the single strongest argument for
-  requirement 1: *without the analysts' trios, the agent answers fluently with real numbers, but to
+  [EVALUATION.md §4](EVALUATION.md#4-results). This is the main evidence for requirement 1: *without the analysts' trios, the agent answers fluently with real numbers, but to
   a slightly different question.*
 
 ---
@@ -520,26 +499,3 @@ definition. Only the execution-accuracy eval caught it.
 **What I would delegate first, and what I would keep.** Delegate the platform work and the persona
 admin UI (well specified). Keep the safety-critical review and the eval gate definition, because
 that is where judgement mistakes are expensive.
-
----
-
-## 7. A five-minute walkthrough for the review meeting
-
-1. **Problem and constraints** (30 s). Executives, natural language, PII never reaches the LLM,
-   k = 5, hard delete, $1/question, 10–30 s.
-2. **Architecture** (60 s). One ADK agent; two plugins as the policy choke point; a governed SQL
-   path (guard, dry-run, cap, scan, pseudonymise); golden retrieval in the instruction. Show the
-   Mermaid diagram.
-3. **The safety story** (60 s). "The model is an untrusted SQL author." Show a rewritten query, then
-   a blocked `ARRAY_AGG` attack.
-4. **The deletion story** (45 s). Live: "delete all reports from this conversation", the exact list,
-   `DELETE 2`, and that the model cannot confirm.
-5. **Resilience and observability** (45 s). `--llm-chaos 1.0` falls back; `retail-agent trace` shows
-   the full correspondence.
-6. **Quality** (45 s). Eval gate numbers, the held-out and ablation numbers, the grounding check, and
-   the known limits with their mitigations.
-7. **How it was reviewed** (30 s). Two review passes, 21 findings, each with a test or eval case.
-   The second pass found mostly failure-to-serve issues (F10, F15), and that changed the process
-   (D16, D19). The online gate then *failed* and blocked the release; the traces showed why (F20, F21),
-   and the fixed version passed.
-8. **Roadmap** (15 s). The P0 list above.
