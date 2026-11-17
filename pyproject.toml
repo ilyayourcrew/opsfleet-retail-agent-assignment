@@ -31,7 +31,7 @@ ollama = ["litellm>=1.109,<2"]
 dev = ["pytest>=9.2,<10", "pytest-asyncio>=1.5,<2", "ruff>=0.17,<0.18"]
 
 [project.scripts]
-retail-agent = "retail_agent.cli:app"
+retail-agent = "retail_agent.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -19,6 +19,19 @@ import yaml
 from pydantic import BaseModel, Field
 
 
+class _ReadableDumper(yaml.SafeDumper):
+    """Trio files are read and edited by analysts (curation, veto), so multi-line text such as SQL and
+    reports is written as YAML block literals (`sql: |`), never as one escaped, quoted string."""
+
+
+def _str_representer(dumper: yaml.SafeDumper, data: str):
+    style = "|" if "\n" in data else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
+
+
+_ReadableDumper.add_representer(str, _str_representer)
+
+
 class Trio(BaseModel):
     id: str
     question: str
@@ -85,7 +98,8 @@ class TrioStore:
         d = self.candidate_dir if candidate else self.active_dir
         d.mkdir(parents=True, exist_ok=True)
         path = d / f"{trio.id}.yaml"
-        path.write_text(yaml.safe_dump(trio.model_dump(), sort_keys=False, allow_unicode=True), encoding="utf-8")
+        path.write_text(yaml.dump(trio.model_dump(), Dumper=_ReadableDumper, sort_keys=False, allow_unicode=True,
+                                  width=110), encoding="utf-8")
         self._cache = None
         return path
 

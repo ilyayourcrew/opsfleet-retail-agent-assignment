@@ -21,7 +21,7 @@ answers = 0** (hard fail). Numeric grounding is reported alongside (not gated ye
 Why these numbers: they are starting points chosen so that the current system passes with a margin
 and a real regression fails. Each threshold should be re-set from the distribution of a few weeks of
 nightly runs (mean minus two standard deviations), and the case set grows from production failures.
-26 to 32 cases is enough to catch gross regressions, not to estimate accuracy to ±5%; the confidence
+About 30 cases (33 today) is enough to catch gross regressions, not to estimate accuracy to ±5%; the confidence
 interval at n = 7 is wide, which is why the gate averages across cases and why held-out cases were
 added.
 
@@ -70,8 +70,10 @@ added.
 ## 4. Results
 
 ### Offline (deterministic model + DuckDB), every commit
-`python evals/run_evals.py` → **GATE: PASSED**: golden execution accuracy 1.00 (7/7), red team 8/8,
-behaviour 4/4, resilience 3/3, 0 PII leaks. Judge cases are skipped offline. `pytest`: 99 passed.
+`python evals/run_evals.py` → **GATE: PASSED** (33 cases): golden execution accuracy 1.00 (7/7), red
+team 10/10, behaviour 5/5, resilience 3/3, 0 PII leaks, numeric grounding 0.98. Judge and held-out
+cases are skipped offline (they need a real model). `pytest`: 153 passed. Verified on clean clones with
+`pip install -r requirements.txt` on Python 3.11, 3.12 and 3.14.
 
 ### Online (Gemini + BigQuery)
 `python evals/run_evals.py --provider gemini --warehouse bigquery --delay 2` (2026-11-16, free tier;

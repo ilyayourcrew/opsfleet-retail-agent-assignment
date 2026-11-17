@@ -455,9 +455,9 @@ definition. Only the execution-accuracy eval caught it.
 
 ## 4. Evidence to quote
 
-* Offline: 150 tests; eval gate passed (33 cases: golden 1.00, red team 10/10, behaviour 5/5,
-  resilience 3/3, 0 PII leaks, numeric grounding 0.99). Clean-clone installs pass on Python 3.11 and
-  3.14.
+* Offline: 153 tests; eval gate passed (33 cases: golden 1.00, red team 10/10, behaviour 5/5,
+  resilience 3/3, 0 PII leaks, numeric grounding 0.98). Clean-clone installs (`pip install -r
+  requirements.txt`) pass on Python 3.11, 3.12 and 3.14, and every README command was run there.
 * Online (2026-11-16, Gemini free tier and BigQuery): gate passed (golden 0.918, judge 5.0, red team
   8/8, behaviour 4/4, resilience 3/3, p95 38.3 s, $0.09 for 26 cases, 0 PII leaks).
 * Online, second pass (2026-11-17): the full gate **failed on p95 latency (69.9 s)**. Held-out 1.00,

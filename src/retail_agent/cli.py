@@ -28,7 +28,9 @@ from rich.table import Table
 
 from retail_agent.config import Settings, get_settings
 
-app = typer.Typer(add_completion=False, no_args_is_help=True, help="Retail data-analysis agent (Google ADK + Gemini + BigQuery)")
+# pretty_exceptions_show_locals=False: a traceback must never print local variables (settings hold the API key)
+app = typer.Typer(add_completion=False, no_args_is_help=True, pretty_exceptions_show_locals=False,
+                  help="Retail data-analysis agent (Google ADK + Gemini + BigQuery)")
 persona_app = typer.Typer(help="Manage the agent persona (tone) without redeploying.")
 app.add_typer(persona_app, name="persona")
 console = Console()
@@ -67,21 +69,50 @@ def _settings(provider: str | None, warehouse: str | None) -> Settings:
 
 def _runtime(provider: str | None, warehouse: str | None, chaos: float = 0.0, llm_chaos: float = 0.0):
     from retail_agent.agent.engine import ChatEngine
-    from retail_agent.agent.services import Services
     from retail_agent.llm.factory import build_model
-    from retail_agent.warehouse.base import WarehouseError
 
     s = _settings(provider, warehouse)
+    services = _services(s, chaos_rate=chaos)
+    return s, services, ChatEngine(services, build_model(s, chaos_rate=llm_chaos))
+
+
+def _require_model_key(s: Settings) -> None:
     if s.llm_provider == "gemini" and not s.google_api_key:
         console.print("[red]GOOGLE_API_KEY is not set.[/red] Add it to .env (free key: https://aistudio.google.com/apikey) "
                       "or run offline with [bold]--provider fake --warehouse duckdb[/bold].")
         raise typer.Exit(2)
+
+
+def _services(s: Settings, chaos_rate: float = 0.0):
+    """Build the service container, turning missing configuration into a one-line explanation."""
+    from retail_agent.agent.services import Services
+    from retail_agent.warehouse.base import WarehouseError
+
+    _require_model_key(s)
     try:
-        services = Services.build(s, chaos_rate=chaos)
+        return Services.build(s, chaos_rate=chaos_rate)
     except WarehouseError as e:
-        console.print(f"[red]Warehouse not available:[/red] {esc(e.message)}\n{esc(e.hint or '')}")
+        console.print(f"[red]Warehouse not available:[/red] {esc(e.message)}\n{esc(e.hint or '')}\n"
+                      "Offline alternative: [bold]--provider fake --warehouse duckdb[/bold] "
+                      "(after `python scripts/build_offline_db.py`).")
         raise typer.Exit(2) from e
-    return s, services, ChatEngine(services, build_model(s, chaos_rate=llm_chaos))
+
+
+def main() -> None:
+    """Console entry point: the outermost error boundary, so no command ends in a raw traceback."""
+    import os
+    import sys
+
+    try:
+        app()
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except Exception as e:  # noqa: BLE001
+        if os.environ.get("RA_DEBUG"):
+            raise
+        console.print(f"[red]Unexpected error ({type(e).__name__}):[/red] {esc(str(e)[:300])}\n"
+                      "Run [bold]retail-agent doctor[/bold] to check the configuration; set RA_DEBUG=1 for details.")
+        sys.exit(1)
 
 
 def _footer(r) -> str:
@@ -355,13 +386,19 @@ def persona_show():
 
 
 @persona_app.command("publish")
-def persona_publish(path: Path, by: str = typer.Option("editor", help="Who is publishing (audit).")):
+def persona_publish(
+    path: Path,
+    by: str = typer.Option("editor", help="Who is publishing (audit)."),
+    provider: str = typer.Option(None, help="Model for the behavioural gate: gemini | ollama | fake (offline)."),
+    warehouse: str = typer.Option(None, help="bigquery | duckdb (offline)."),
+):
     """Validate a persona file with the automated quality gate and make it live (no redeploy)."""
     from retail_agent.persona.quality import build_gate
     from retail_agent.persona.registry import PersonaRegistry
 
     _quiet_logs()
-    s = get_settings()
+    s = _settings(provider, warehouse)
+    _require_model_key(s)  # the gate runs test conversations with the configured model
     reg = PersonaRegistry(s.app_db_path, s.config_dir / "personas" / "executive_crisp.yaml")
     rep = reg.publish(path, build_gate(s), published_by=by)
     for k, v in rep.checks.items():
@@ -399,14 +436,17 @@ def persona_history():
 
 
 @app.command()
-def learn(revalidate: bool = typer.Option(False, help="Also re-validate active trios (nightly job).")):
+def learn(
+    revalidate: bool = typer.Option(False, help="Also re-validate active trios (nightly job)."),
+    provider: str = typer.Option(None, help="gemini (adds the LLM judge) | fake (offline)."),
+    warehouse: str = typer.Option(None, help="bigquery | duckdb (offline)."),
+):
     """System-level learning: mine positively rated turns into candidate trios and run the automated gate."""
-    from retail_agent.agent.services import Services
     from retail_agent.golden.promotion import PromotionGate, make_llm_judge, mine_candidates
 
     _quiet_logs()
-    s = get_settings()
-    services = Services.build(s)
+    s = _settings(provider, warehouse)
+    services = _services(s)
     mined = mine_candidates(services.traces, services.trios)
     console.print(f"Mined {len(mined)} new candidate trio(s) from rated conversations.")
     judge = None
@@ -463,4 +503,4 @@ def doctor(provider: str = typer.Option(None), warehouse: str = typer.Option(Non
 
 
 if __name__ == "__main__":
-    app()
+    main()

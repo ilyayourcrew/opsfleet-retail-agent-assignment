@@ -180,10 +180,10 @@ sequenceDiagram
     A-->>CLI: "I found 3 reports ... please confirm"
     CLI->>U: exact list (id, title, created) + "type DELETE 3 to confirm"
     U->>CLI: DELETE 3
-    CLI->>D: confirm(token, user, session)  (deterministic code, LLM not involved)
+    CLI->>D: confirm(token, user, session, typed phrase) - deterministic code, LLM not involved
     D->>S: re-check ownership + snapshot unchanged, hard DELETE
     D-->>CLI: deleted 3
-    CLI->>A: system note "user confirmed; 3 reports deleted" (keeps conversation coherent)
+    S-->>A: next turn - audit log in the instructions: "reports #1-#3 DELETED (confirmed by the user)"
 ```
 
 ## 4. Prototype mapping

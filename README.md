@@ -76,8 +76,8 @@ Ollama or a deterministic model).
 
 ### Install
 ```bash
-git clone <this repository> retail-agent
-cd retail-agent
+git clone https://github.com/ilyayourcrew/opsfleet-retail-agent-assignment.git
+cd opsfleet-retail-agent-assignment
 python -m venv .venv
 # Windows: .venv\Scripts\activate      macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
@@ -91,7 +91,7 @@ cp .env.example .env          # Windows: copy .env.example .env
 # edit .env: GOOGLE_API_KEY=<your AI Studio key>, RA_GCP_PROJECT=<your GCP project id>
 gcloud auth application-default login
 gcloud services enable bigquery.googleapis.com --project <your GCP project id>
-retail-agent doctor           # checks BigQuery and both Gemini models
+retail-agent doctor           # checks BigQuery and every Gemini model in the fallback chain
 ```
 All settings are in `.env.example` (models, budgets, k, byte cap, ...). BigQuery auth follows the
 standard [client-library ADC flow](https://cloud.google.com/bigquery/docs/reference/libraries); a
@@ -116,7 +116,7 @@ retail-agent chat --provider ollama --warehouse duckdb     # local LLM (set RA_O
 
 ### Tests and evaluation
 ```bash
-pytest                                   # ~150 offline tests (unit, adversarial, end-to-end), ~15 s
+pytest                                   # ~150 offline tests (unit, adversarial, end-to-end, CLI), ~15 s
 python evals/run_evals.py                # offline eval gate
 python evals/run_evals.py --provider gemini --warehouse bigquery --delay 3   # online eval gate
 python evals/run_evals.py --provider gemini --warehouse bigquery --only golden,heldout --no-golden  # ablation: value of the golden bucket
@@ -131,6 +131,8 @@ retail-agent learn [--revalidate]        # mine rated turns -> candidate trios -
 retail-agent stats [--hours 24]          # agent metrics
 retail-agent trace [TRACE_ID]            # deep dive into a turn
 ```
+`persona publish` and `learn` use Gemini and BigQuery by default (the persona gate runs test
+conversations with the model). To run them offline, add `--provider fake --warehouse duckdb`.
 Resilience demo: `retail-agent chat --chaos 0.5 --llm-chaos 1.0` (half the warehouse calls fail, and the
 primary model always fails, so the fallback model answers).
 
