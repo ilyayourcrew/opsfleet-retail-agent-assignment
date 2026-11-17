@@ -65,3 +65,44 @@ async def test_slow_model_times_out_into_fallback_and_breaker_skips_it():
     # two timeouts open the breaker; the third call skips the slow model instantly
     assert time.perf_counter() - t0 < 1.0
     assert _BREAKERS["slow-model"].state == "open"
+
+
+class _StreamingLlm(ScriptedLlm):
+    """First chunk fast, then a long generation (like a model writing a report)."""
+
+    gen_s: float = 0.4
+
+    async def generate_content_async(self, llm_request, stream=False):
+        import asyncio
+
+        await asyncio.sleep(0.02)
+        part = text_response("Q1 revenue grew")
+        part.partial = True
+        yield part
+        await asyncio.sleep(self.gen_s)
+        yield text_response("Q1 revenue grew 11.6% QoQ. Full report follows.")
+
+
+async def test_long_generation_that_has_started_is_not_thrown_away():
+    """Regression (seen live): one fixed 20 s deadline cut the primary off mid-report; the weaker
+    fallback then regenerated the answer (~45 s extra). Time-to-first-token decides 'hung'."""
+    from retail_agent.llm.fake import _BREAKERS, BreakerLlm
+
+    _BREAKERS.clear()
+    primary = BreakerLlm(inner=_StreamingLlm(model="writer"), model="writer", timeout_s=0.2, total_timeout_s=2.0)
+    backup = ScriptedLlm(steps=[text_response("weaker backup")], model="backup")
+    out = await _collect(FallbackModel(models=[primary, backup]), _req("Create the Q1 report"))
+    assert [o.content.parts[0].text for o in out] == ["Q1 revenue grew 11.6% QoQ. Full report follows."]
+    assert all(not o.partial for o in out)  # caller asked for non-streaming: only the aggregated result
+    assert _BREAKERS["writer"].state == "closed"
+
+
+async def test_generation_beyond_the_total_cap_falls_back_without_tripping():
+    from retail_agent.llm.fake import _BREAKERS, BreakerLlm
+
+    _BREAKERS.clear()
+    primary = BreakerLlm(inner=_StreamingLlm(model="rambler", gen_s=1.0), model="rambler", timeout_s=0.2, total_timeout_s=0.3)
+    backup = ScriptedLlm(steps=[text_response("backup answer")], model="backup")
+    out = await _collect(FallbackModel(models=[primary, backup]), _req("Create the Q1 report"))
+    assert out[0].content.parts[0].text == "backup answer"
+    assert _BREAKERS["rambler"].state == "closed"  # counted as a failure, not tripped on the first one

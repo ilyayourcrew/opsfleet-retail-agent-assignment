@@ -116,7 +116,7 @@ retail-agent chat --provider ollama --warehouse duckdb     # local LLM (set RA_O
 
 ### Tests and evaluation
 ```bash
-pytest                                   # ~125 offline tests (unit, adversarial, end-to-end), ~15 s
+pytest                                   # ~150 offline tests (unit, adversarial, end-to-end), ~15 s
 python evals/run_evals.py                # offline eval gate
 python evals/run_evals.py --provider gemini --warehouse bigquery --delay 3   # online eval gate
 python evals/run_evals.py --provider gemini --warehouse bigquery --only golden,heldout --no-golden  # ablation: value of the golden bucket

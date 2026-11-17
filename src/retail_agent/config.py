@@ -36,7 +36,8 @@ class Settings(BaseSettings):
     ollama_model: str = "ollama_chat/qwen2.5:7b"
     embedding_model: str = "gemini-embedding-001"
     llm_timeout_s: float = 60.0
-    # deadline per attempt for every model except the last in the chain (slow -> fall back)
+    # time-to-first-token deadline for every model except the last in the chain (no token -> fall back);
+    # once a model is streaming, llm_timeout_s caps the whole answer
     llm_attempt_timeout_s: float = 20.0
     llm_retry_attempts: int = 3
     # USD per 1M tokens (input, output) used by the cost meter. Defaults match Gemini Flash list

@@ -5,7 +5,7 @@ This is the "why" companion to [TECHNICAL_DESIGN.md](TECHNICAL_DESIGN.md). It co
   alternatives, why this option won, what it costs, the evidence in this repository, and what would
   change the decision;
 - the questions a reviewer is likely to ask, with short answers;
-- what two tech-lead review passes found and fixed (19 findings, each with a regression test);
+- what two tech-lead review passes found and fixed (21 findings, each with a regression test or eval case);
 - a prioritised roadmap;
 - how a team would build and run it, and a five-minute walkthrough for the review meeting.
 
@@ -437,20 +437,33 @@ fails without the fix.
 | F17 | **Public pseudonymisation key.** The default HMAC key "change-me" ships in the repo, and ids are small integers, so every `C-…` pseudonym was reversible. | Medium (privacy claim) | Random per-installation key in the state dir. | covered by existing pseudonymiser tests and config |
 | F18 | **No CI** although the design names a CI gate. | Medium (team) | GitHub Actions (3.11/3.12/3.14, lint, tests, offline eval; manual online eval), Dependabot, CONTRIBUTING, PR template. | the workflow itself |
 | F19 | **Prompt order defeated caching.** Per-user text came first, so no two requests shared a prefix. | Low (cost, latency) | Static-first order; cached tokens traced; prefix pinned by a test. | `test_system_prompt_has_a_long_shared_prefix_for_prompt_caching` |
+| F20 | **Found by the online gate failing (p95 69.9 s):** the fixed 20 s per-attempt deadline cut the primary off mid-report; a weaker model regenerated the answer (+45 s). | High (latency SLO) | Stream the inner call; a time-to-first-token deadline decides "hung", a total cap bounds long answers. g3: 73.7 → 17.7 s. | `test_long_generation_that_has_started_is_not_thrown_away`, `test_generation_beyond_the_total_cap_falls_back_without_tripping` |
+| F21 | **Found by execution accuracy (g4 = 0.07):** the agent dropped the net-revenue filter to compute return rates in one query, then labelled gross revenue "net". Real numbers, fluent answer, wrong definition. | High (correctness, silently wrong) | Definition note in the schema catalog (static prompt): conditional SUM for net revenue when rates are needed. g4 then 1.00 in 3/3 runs. | eval g4 (online) |
 
 **What the pattern says (useful in the interview).** The first pass found attack-side holes. The
 second pass found mostly *failure-to-serve* and *operational* holes: false refusals, cost leaks,
 install failures, a crash in the confirmation step. Those are what a client experiences first.
 Hence D16 and D19.
 
+F20 and F21 came from the *online gate failing*. That is the gate doing its job, and it is a good
+story to tell: the release was blocked, the traces showed exactly why (a deadline design flaw and a
+metric-definition slip), each cause got a fix and a test, and the targeted re-run passed. F21 is
+also the clearest live example of the biggest risk named in Q20: real numbers, fluent text, wrong
+definition. Only the execution-accuracy eval caught it.
+
 ---
 
 ## 4. Evidence to quote
 
-* Offline: 125 tests; eval gate passed (32 cases: golden 1.00, red team 10/10, behaviour 4/4,
-  resilience 3/3, 0 PII leaks, numeric grounding 0.99).
+* Offline: 150 tests; eval gate passed (33 cases: golden 1.00, red team 10/10, behaviour 5/5,
+  resilience 3/3, 0 PII leaks, numeric grounding 0.99). Clean-clone installs pass on Python 3.11 and
+  3.14.
 * Online (2026-11-16, Gemini free tier and BigQuery): gate passed (golden 0.918, judge 5.0, red team
   8/8, behaviour 4/4, resilience 3/3, p95 38.3 s, $0.09 for 26 cases, 0 PII leaks).
+* Online, second pass (2026-11-17): the full gate **failed on p95 latency (69.9 s)**. Held-out 1.00,
+  judge 4.94, red team 10/10, behaviour 5/5, 0 PII leaks. Diagnosis: F20 and F21. After the fixes, a
+  targeted re-run **passed**: p95 43.3 s, golden cases 1.00, g4 1.00 in 3/3 extra runs. The full gate
+  was not repeated the same day (the primary model's free-tier quota was used up); say so if asked.
 * Online held-out and ablation (Gemini and BigQuery): golden execution accuracy **1.00 with trios vs
   0.41 without**. The failures without trios are exactly the cases where a business definition
   matters (margin, channel value, delivery time). Held-out questions score 1.00 either way, numeric
@@ -524,7 +537,8 @@ that is where judgement mistakes are expensive.
    the full correspondence.
 6. **Quality** (45 s). Eval gate numbers, the held-out and ablation numbers, the grounding check, and
    the known limits with their mitigations.
-7. **How it was reviewed** (30 s). Two review passes, 19 findings, each with a test that fails
-   without the fix. The second pass found mostly failure-to-serve issues (F10, F15), and that changed
-   the process (D16, D19).
+7. **How it was reviewed** (30 s). Two review passes, 21 findings, each with a test or eval case.
+   The second pass found mostly failure-to-serve issues (F10, F15), and that changed the process
+   (D16, D19). The online gate then *failed* and blocked the release; the traces showed why (F20, F21),
+   and the fixed version passed.
 8. **Roadmap** (15 s). The P0 list above.

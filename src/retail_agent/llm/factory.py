@@ -55,7 +55,8 @@ def build_model(settings: Settings, chaos_rate: float = 0.0) -> BaseLlm:
         names = [settings.model_primary, *settings.fallback_models]
         chain = [gemini(n, last=i == len(names) - 1) for i, n in enumerate(names)]
         # skip a model whose recent calls keep failing (no latency paid while it is overloaded)
-        chain = [BreakerLlm(inner=m, model=m.model, timeout_s=settings.llm_attempt_timeout_s) if i < len(chain) - 1 else m
+        chain = [BreakerLlm(inner=m, model=m.model, timeout_s=settings.llm_attempt_timeout_s,
+                            total_timeout_s=settings.llm_timeout_s) if i < len(chain) - 1 else m
                  for i, m in enumerate(chain)]
     if chaos_rate > 0:
         chain[0] = ChaosLlm(inner=chain[0], failure_rate=chaos_rate, model=f"chaos({chain[0].model})")

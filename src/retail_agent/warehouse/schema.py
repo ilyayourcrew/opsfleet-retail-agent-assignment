@@ -68,6 +68,9 @@ TABLES: dict[str, Table] = {
         ),
         notes=(
             "Net revenue conventionally excludes items with status Cancelled or Returned.",
+            "Need net revenue AND return/cancel rates in one query? Keep all items and compute net revenue as "
+            "SUM(IF(status NOT IN ('Cancelled', 'Returned'), sale_price, 0)); never call an unfiltered "
+            "SUM(sale_price) 'net revenue' (it is gross).",
             "Gross margin = sale_price - products.cost.",
         ),
     ),
