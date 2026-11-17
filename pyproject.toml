@@ -11,7 +11,7 @@ requires-python = ">=3.11,<3.15"
 dependencies = [
     "google-adk>=2.14.1,<2.15",   # behaviour-pinned: see requirements.txt
     "sqlglot>=30.32,<31",         # the SQL guard depends on its AST classes
-    "google-genai>=2.34,<3",
+    "google-genai>=2.34,<4",
     "google-cloud-bigquery>=3.47,<4",
     "db-dtypes>=1.9,<2",
     "pandas>=3.1,<4",
